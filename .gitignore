@@ -4,6 +4,8 @@
 *.pdb
 *.log
 *.tmp
+*.zip
 *.lnk
+release-notes.md
 .DS_Store
 Thumbs.db
