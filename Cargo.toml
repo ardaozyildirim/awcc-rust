@@ -1,6 +1,6 @@
 [package]
 name = "awcc-lite"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Lightweight AWCC replacement for Alienware thermal, fan, and macro control"
 authors = ["Arda Özyıldırım"]
