@@ -38,8 +38,11 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const HOTKEY_F6: i32 = 1001;
 const HOTKEY_F7: i32 = 1002;
 const HOTKEY_M1: i32 = 1011;
-const HOTKEY_M2: i32 = 1012;
-const HOTKEY_M3: i32 = 1013;
+const HOTKEY_M1_ALT: i32 = 1012;
+const HOTKEY_M2: i32 = 1021;
+const HOTKEY_M2_ALT: i32 = 1022;
+const HOTKEY_M3: i32 = 1031;
+const HOTKEY_M3_ALT: i32 = 1032;
 
 const UI_WIDTH: f32 = 700.0;
 const UI_HEIGHT: f32 = 836.0;
@@ -95,13 +98,13 @@ struct Layout {
     tcc_apply: Rect,
     m1_card: Rect,
     m1_btn: Rect,
-    m1_opts: [Rect; 3],
+    m1_opts: [Rect; 4],
     m2_card: Rect,
     m2_btn: Rect,
-    m2_opts: [Rect; 3],
+    m2_opts: [Rect; 4],
     m3_card: Rect,
     m3_btn: Rect,
-    m3_opts: [Rect; 3],
+    m3_opts: [Rect; 4],
     refresh: Rect,
     logs: Rect,
     elevate: Rect,
@@ -159,12 +162,12 @@ fn build_layout() -> Layout {
     let m2_btn = Rect::new(PAD + card_w - 20.0 - 120.0, y_m2 + 20.0, 120.0, 34.0);
     let m3_btn = Rect::new(PAD + card_w - 20.0 - 120.0, y_m3 + 20.0, 120.0, 34.0);
 
-    let opt_w = (card_w - 40.0 - 20.0) / 3.0;
+    let opt_w = (card_w - 40.0 - 30.0) / 4.0;
     let opt_h = 56.0;
-    let mut m1_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
-    let mut m2_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
-    let mut m3_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
-    for i in 0..3 {
+    let mut m1_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 4];
+    let mut m2_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 4];
+    let mut m3_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 4];
+    for i in 0..4 {
         let x = PAD + 20.0 + i as f32 * (opt_w + 10.0);
         m1_opts[i] = Rect::new(x, y_m1 + 124.0, opt_w, opt_h);
         m2_opts[i] = Rect::new(x, y_m2 + 124.0, opt_w, opt_h);
@@ -311,15 +314,43 @@ impl App {
             // Register Alienware keyboard hotkeys
             // F6: Thermal Profile Cycle
             // F7: Stealth Mode Toggle
-            // Alt+F1..F3: Dedicated M1, M2, M3 Macro keys
             RegisterHotKey(hwnd, HOTKEY_F6, MOD_NOREPEAT, VK_F6 as u32);
             RegisterHotKey(hwnd, HOTKEY_F7, MOD_NOREPEAT, VK_F7 as u32);
-            RegisterHotKey(hwnd, HOTKEY_M1, MOD_ALT | MOD_NOREPEAT, VK_F1 as u32);
-            RegisterHotKey(hwnd, HOTKEY_M2, MOD_ALT | MOD_NOREPEAT, VK_F2 as u32);
-            RegisterHotKey(hwnd, HOTKEY_M3, MOD_ALT | MOD_NOREPEAT, VK_F3 as u32);
         }
 
+        self.update_macro_hotkeys();
         self.refresh();
+    }
+
+    fn update_macro_hotkeys(&self) {
+        if self.hwnd.is_null() {
+            return;
+        }
+        unsafe {
+            // M1 (F1 / Alt+F1)
+            UnregisterHotKey(self.hwnd, HOTKEY_M1);
+            UnregisterHotKey(self.hwnd, HOTKEY_M1_ALT);
+            if self.m1_action > 0 {
+                RegisterHotKey(self.hwnd, HOTKEY_M1, MOD_NOREPEAT, VK_F1 as u32);
+                RegisterHotKey(self.hwnd, HOTKEY_M1_ALT, MOD_ALT | MOD_NOREPEAT, VK_F1 as u32);
+            }
+
+            // M2 (F2 / Alt+F2)
+            UnregisterHotKey(self.hwnd, HOTKEY_M2);
+            UnregisterHotKey(self.hwnd, HOTKEY_M2_ALT);
+            if self.m2_action > 0 {
+                RegisterHotKey(self.hwnd, HOTKEY_M2, MOD_NOREPEAT, VK_F2 as u32);
+                RegisterHotKey(self.hwnd, HOTKEY_M2_ALT, MOD_ALT | MOD_NOREPEAT, VK_F2 as u32);
+            }
+
+            // M3 (F3 / Alt+F3)
+            UnregisterHotKey(self.hwnd, HOTKEY_M3);
+            UnregisterHotKey(self.hwnd, HOTKEY_M3_ALT);
+            if self.m3_action > 0 {
+                RegisterHotKey(self.hwnd, HOTKEY_M3, MOD_NOREPEAT, VK_F3 as u32);
+                RegisterHotKey(self.hwnd, HOTKEY_M3_ALT, MOD_ALT | MOD_NOREPEAT, VK_F3 as u32);
+            }
+        }
     }
 
     fn px(&self, value: i32) -> i32 {
@@ -540,14 +571,32 @@ impl App {
             Hit::TriggerM3 => self.trigger_m3(),
             Hit::SetM1(idx) => {
                 self.m1_action = idx;
+                self.update_macro_hotkeys();
+                self.notice = Some(if idx == 0 {
+                    "M1 (F1) macro assignment removed (F1 is standard)".into()
+                } else {
+                    "M1 (F1) macro assigned & hotkey active".into()
+                });
                 self.invalidate();
             }
             Hit::SetM2(idx) => {
                 self.m2_action = idx;
+                self.update_macro_hotkeys();
+                self.notice = Some(if idx == 0 {
+                    "M2 (F2) macro assignment removed (F2 is standard)".into()
+                } else {
+                    "M2 (F2) macro assigned & hotkey active".into()
+                });
                 self.invalidate();
             }
             Hit::SetM3(idx) => {
                 self.m3_action = idx;
+                self.update_macro_hotkeys();
+                self.notice = Some(if idx == 0 {
+                    "M3 (F3) macro assignment removed (F3 is standard)".into()
+                } else {
+                    "M3 (F3) macro assigned & hotkey active".into()
+                });
                 self.invalidate();
             }
             Hit::Refresh => self.refresh(),
@@ -713,17 +762,21 @@ impl App {
     fn trigger_m1(&mut self) {
         match self.m1_action {
             0 => {
+                self.notice = Some("M1 is unassigned (Standard F1)".into());
+                self.invalidate();
+            }
+            1 => {
                 if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA4) {
                     self.apply_profile(pos);
                     self.notice = Some("M1 (F1): Turbo Overdrive Profile Applied".into());
                 }
             }
-            1 => {
+            2 => {
                 let _ = self.awcc.as_ref().map(|awcc| awcc.set_tcc_offset(15));
-                self.notice = Some("M1 (F1): Max Cooling (TCC 15C limit) Applied".into());
+                self.notice = Some("M1 (F1): Max Cooling (TCC 15°C limit) Applied".into());
                 self.refresh();
             }
-            2 => {
+            3 => {
                 let op = ui::wide("open");
                 let target = ui::wide("taskmgr.exe");
                 unsafe {
@@ -739,16 +792,20 @@ impl App {
     fn trigger_m2(&mut self) {
         match self.m2_action {
             0 => {
+                self.notice = Some("M2 is unassigned (Standard F2)".into());
+                self.invalidate();
+            }
+            1 => {
                 if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_QUIET) {
                     self.apply_profile(pos);
                     self.notice = Some("M2 (F2): Whisper Quiet (Silent 0 dB) Applied".into());
                 }
             }
-            1 => {
+            2 => {
                 self.toggle_stealth();
                 self.notice = Some("M2 (F2): Stealth Mode Toggled".into());
             }
-            2 => {
+            3 => {
                 if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA2) {
                     self.apply_profile(pos);
                     self.notice = Some("M2 (F2): Eco Battery Profile Applied".into());
@@ -761,20 +818,24 @@ impl App {
     fn trigger_m3(&mut self) {
         match self.m3_action {
             0 => {
-                if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA0) {
-                    self.apply_profile(pos);
-                    self.notice = Some("M3 (F3): Balanced Everyday Profile Restored".into());
-                }
+                self.notice = Some("M3 is unassigned (Standard F3)".into());
+                self.invalidate();
             }
             1 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA0) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M3 (F3): Balanced Everyday Profile Applied".into());
+                }
+            }
+            2 => {
                 if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_PERFORMANCE) {
                     self.apply_profile(pos);
                     self.notice = Some("M3 (F3): Performance Boost Mode Applied".into());
                 }
             }
-            2 => {
+            3 => {
                 let _ = self.awcc.as_ref().map(|awcc| awcc.set_tcc_offset(0));
-                self.notice = Some("M3 (F3): CPU Thermal Limit Reset to Factory (0C)".into());
+                self.notice = Some("M3 (F3): CPU Thermal Limit Reset to Factory (0°C)".into());
                 self.refresh();
             }
             _ => {}
@@ -1412,22 +1473,22 @@ impl App {
     }
 
     fn draw_macros_tab(&self, painter: &Painter) {
-        let m1_names = ["Turbo Overdrive", "Max Cooling (-15C)", "Task Manager"];
-        let m1_hints = ["100% Fans & Clocks", "Drop CPU limit to 85C", "Open Windows Taskmgr"];
+        let m1_names = ["None (Kaldır)", "Turbo Overdrive", "Max Cooling (-15°C)", "Task Manager"];
+        let m1_hints = ["F1 Normal Windows", "100% Fans & Clocks", "Drop CPU limit to 85°C", "Open Windows Taskmgr"];
 
-        let m2_names = ["Whisper Quiet", "Stealth Toggle", "Eco Battery"];
-        let m2_hints = ["Silent 0 dB Curve", "Toggle Stealth & Dark", "Power Saving Limit"];
+        let m2_names = ["None (Kaldır)", "Whisper Quiet", "Stealth Toggle", "Eco Battery"];
+        let m2_hints = ["F2 Normal Windows", "Silent 0 dB Curve", "Toggle Stealth Mode", "Power Saving Limit"];
 
-        let m3_names = ["Balanced Daily", "Performance Boost", "Factory Defaults"];
-        let m3_hints = ["Standard Factory Curve", "Enhanced Clocks", "Reset TCC & Profile"];
+        let m3_names = ["None (Kaldır)", "Balanced Daily", "Performance Boost", "Factory Defaults"];
+        let m3_hints = ["F3 Normal Windows", "Standard Factory Curve", "Enhanced Clocks", "Reset TCC & Profile"];
 
         let cards = [
-            ("M1", "KEY F1 (ALT+F1)", "Primary Action Key", self.layout.m1_card, self.layout.m1_btn, &self.layout.m1_opts, self.m1_action, &m1_names, &m1_hints, Hit::TriggerM1),
-            ("M2", "KEY F2 (ALT+F2)", "Acoustic & Silent Key", self.layout.m2_card, self.layout.m2_btn, &self.layout.m2_opts, self.m2_action, &m2_names, &m2_hints, Hit::TriggerM2),
-            ("M3", "KEY F3 (ALT+F3)", "Standard & Daily Key", self.layout.m3_card, self.layout.m3_btn, &self.layout.m3_opts, self.m3_action, &m3_names, &m3_hints, Hit::TriggerM3),
+            ("M1", "KEY F1 / ALT+F1", self.layout.m1_card, self.layout.m1_btn, &self.layout.m1_opts, self.m1_action, &m1_names, &m1_hints, Hit::TriggerM1),
+            ("M2", "KEY F2 / ALT+F2", self.layout.m2_card, self.layout.m2_btn, &self.layout.m2_opts, self.m2_action, &m2_names, &m2_hints, Hit::TriggerM2),
+            ("M3", "KEY F3 / ALT+F3", self.layout.m3_card, self.layout.m3_btn, &self.layout.m3_opts, self.m3_action, &m3_names, &m3_hints, Hit::TriggerM3),
         ];
 
-        for (key_id, hotkey_desc, role_desc, card, btn, opts, selected_action, names, hints, trigger_hit) in cards {
+        for (key_id, hotkey_desc, card, btn, opts, selected_action, names, hints, trigger_hit) in cards {
             painter.fill_round_rect(card, 16.0, theme::CARD);
             painter.stroke_round_rect(card, 16.0, theme::BORDER, 1.0);
 
@@ -1444,27 +1505,38 @@ impl App {
                 theme::TEXT_FAINT,
                 Align::Left,
             );
+
+            let is_assigned = selected_action > 0;
+            let status_text = if is_assigned {
+                format!("ACTIVE: {}", names[selected_action])
+            } else {
+                "UNASSIGNED (Standard Windows Key)".to_string()
+            };
+            let status_color = if is_assigned { theme::GOOD } else { theme::TEXT_FAINT };
+
             painter.text(
-                role_desc,
-                Rect::new(card.x + 82.0, card.y + 34.0, 220.0, 18.0),
+                &status_text,
+                Rect::new(card.x + 82.0, card.y + 34.0, 320.0, 18.0),
                 FontKind::Label,
-                theme::TEXT,
+                status_color,
                 Align::Left,
             );
 
             // Trigger Button
-            let btn_hovered = self.hover == trigger_hit || self.pressed == trigger_hit;
+            let btn_label = if is_assigned { "Run Macro" } else { "Unassigned" };
+            let btn_enabled = is_assigned;
+            let btn_hovered = btn_enabled && (self.hover == trigger_hit || self.pressed == trigger_hit);
             painter.fill_round_rect(
                 btn,
                 8.0,
-                if btn_hovered { theme::ACCENT } else { theme::CARD_HOVER },
+                if btn_hovered { theme::ACCENT } else if btn_enabled { theme::CARD_HOVER } else { theme::TRACK },
             );
-            painter.stroke_round_rect(btn, 8.0, theme::BORDER_HOVER, 1.0);
+            painter.stroke_round_rect(btn, 8.0, theme::BORDER, 1.0);
             painter.text(
-                "Run Macro",
+                btn_label,
                 btn,
                 FontKind::Label,
-                if btn_hovered { theme::BG } else { theme::TEXT },
+                if btn_hovered { theme::BG } else if btn_enabled { theme::TEXT } else { theme::TEXT_FAINT },
                 Align::Center,
             );
 
@@ -1487,27 +1559,43 @@ impl App {
                     _ => false,
                 };
 
-                painter.fill_round_rect(
-                    *opt_rect,
-                    10.0,
-                    if active { theme::CARD_ACTIVE } else if opt_hovered { theme::CARD_HOVER } else { theme::BG },
-                );
-                if active {
-                    painter.stroke_glow_round_rect(*opt_rect, 10.0, theme::ACCENT, theme::ACCENT_GLOW);
+                let pill_color = if active {
+                    if idx == 0 { mix(theme::CARD, theme::BAD, 0.2) } else { theme::CARD_ACTIVE }
+                } else if opt_hovered {
+                    theme::CARD_HOVER
                 } else {
-                    painter.stroke_round_rect(*opt_rect, 10.0, theme::BORDER, 1.0);
+                    theme::BG
+                };
+                let border_color = if active {
+                    if idx == 0 { theme::BAD } else { theme::ACCENT }
+                } else {
+                    theme::BORDER
+                };
+                painter.fill_round_rect(*opt_rect, 10.0, pill_color);
+                if active {
+                    if idx == 0 {
+                        painter.stroke_round_rect(*opt_rect, 10.0, theme::BAD, 1.5);
+                    } else {
+                        painter.stroke_glow_round_rect(*opt_rect, 10.0, theme::ACCENT, theme::ACCENT_GLOW);
+                    }
+                } else {
+                    painter.stroke_round_rect(*opt_rect, 10.0, border_color, 1.0);
                 }
 
                 painter.text(
                     names[idx],
-                    Rect::new(opt_rect.x + 12.0, opt_rect.y + 10.0, opt_rect.w - 24.0, 18.0),
+                    Rect::new(opt_rect.x + 8.0, opt_rect.y + 10.0, opt_rect.w - 16.0, 18.0),
                     FontKind::Label,
-                    if active { theme::ACCENT } else { theme::TEXT },
+                    if active {
+                        if idx == 0 { theme::BAD } else { theme::ACCENT }
+                    } else {
+                        theme::TEXT
+                    },
                     Align::Left,
                 );
                 painter.text(
                     hints[idx],
-                    Rect::new(opt_rect.x + 12.0, opt_rect.y + 30.0, opt_rect.w - 24.0, 16.0),
+                    Rect::new(opt_rect.x + 8.0, opt_rect.y + 30.0, opt_rect.w - 16.0, 16.0),
                     FontKind::Tiny,
                     theme::TEXT_FAINT,
                     Align::Left,
@@ -1856,9 +1944,9 @@ unsafe extern "system" fn wndproc(
                     match id {
                         HOTKEY_F6 => (*app).cycle_profile(),
                         HOTKEY_F7 => (*app).toggle_stealth(),
-                        HOTKEY_M1 => (*app).trigger_m1(),
-                        HOTKEY_M2 => (*app).trigger_m2(),
-                        HOTKEY_M3 => (*app).trigger_m3(),
+                        HOTKEY_M1 | HOTKEY_M1_ALT => (*app).trigger_m1(),
+                        HOTKEY_M2 | HOTKEY_M2_ALT => (*app).trigger_m2(),
+                        HOTKEY_M3 | HOTKEY_M3_ALT => (*app).trigger_m3(),
                         _ => {}
                     }
                 }
