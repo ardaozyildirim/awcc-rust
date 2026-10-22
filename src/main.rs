@@ -23,8 +23,7 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F10, VK_F6,
-    VK_F7, VK_F8, VK_F9,
+    MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F6, VK_F7,
 };
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -36,9 +35,6 @@ const POLL_MS: u32 = 2000;
 
 const HOTKEY_F6: i32 = 1001;
 const HOTKEY_F7: i32 = 1002;
-const HOTKEY_F8: i32 = 1003;
-const HOTKEY_F9: i32 = 1004;
-const HOTKEY_F10: i32 = 1005;
 
 const UI_WIDTH: f32 = 700.0;
 const UI_HEIGHT: f32 = 830.0;
@@ -228,12 +224,9 @@ impl App {
             );
             SetTimer(hwnd, TIMER_ID, POLL_MS, None);
 
-            // Register Alienware global hotkeys & macros
+            // Register Alienware keyboard hotkeys (F6 Thermal Cycle, F7 Stealth Mode)
             RegisterHotKey(hwnd, HOTKEY_F6, MOD_NOREPEAT, VK_F6 as u32);
             RegisterHotKey(hwnd, HOTKEY_F7, MOD_NOREPEAT, VK_F7 as u32);
-            RegisterHotKey(hwnd, HOTKEY_F8, MOD_NOREPEAT, VK_F8 as u32);
-            RegisterHotKey(hwnd, HOTKEY_F9, MOD_NOREPEAT, VK_F9 as u32);
-            RegisterHotKey(hwnd, HOTKEY_F10, MOD_NOREPEAT, VK_F10 as u32);
         }
 
         self.refresh();
@@ -567,48 +560,6 @@ impl App {
         if let Some(pos) = PROFILES.iter().position(|p| p.id == target_id) {
             self.apply_profile(pos);
             self.notice = Some(format!("F6 Hotkey: Cycled to {} mode", PROFILES[pos].label));
-        }
-    }
-
-    fn macro_overdrive(&mut self) {
-        if !self.can_write() {
-            self.error = Some("Administrator access is required for Turbo Macro.".into());
-            self.invalidate();
-            return;
-        }
-        if self.stealth_on {
-            self.stealth_on = false;
-        }
-        if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA4) {
-            self.apply_profile(pos);
-            self.notice = Some("Macro F8: Turbo Overdrive Activated (Max Fans & Clocks)".to_string());
-        }
-    }
-
-    fn macro_quiet(&mut self) {
-        if !self.can_write() {
-            self.error = Some("Administrator access is required for Quiet Macro.".into());
-            self.invalidate();
-            return;
-        }
-        if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_QUIET) {
-            self.apply_profile(pos);
-            self.notice = Some("Macro F9: Whisper Quiet Activated".to_string());
-        }
-    }
-
-    fn macro_balanced(&mut self) {
-        if !self.can_write() {
-            self.error = Some("Administrator access is required for Balanced Macro.".into());
-            self.invalidate();
-            return;
-        }
-        if self.stealth_on {
-            self.stealth_on = false;
-        }
-        if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA0) {
-            self.apply_profile(pos);
-            self.notice = Some("Macro F10: Balanced Everyday Restored".to_string());
         }
     }
 
@@ -1085,12 +1036,12 @@ impl App {
             };
 
             let tag = match profile.id {
-                0xA4 => "TURBO [F8]",
-                PROFILE_QUIET => "WHISPER [F9]",
-                0xA0 => "BALANCED [F10]",
-                PROFILE_PERFORMANCE => "BOOST [F6]",
+                0xA4 => "TURBO",
+                PROFILE_QUIET => "WHISPER",
+                0xA0 => "BALANCED",
+                PROFILE_PERFORMANCE => "BOOST",
                 0xA2 => "ECO",
-                _ => "TUNED",
+                _ => "CUSTOM",
             };
             let tag_color = if active { theme::ACCENT } else { theme::TEXT_FAINT };
             painter.text(
@@ -1280,7 +1231,7 @@ impl App {
         } else if let Some(notice) = &self.notice {
             (notice.clone(), theme::GOOD)
         } else {
-            (format!("ACPI: {interface}  |  MACROS: F6 Cycle, F7 Stealth, F8 Turbo, F9 Whisper, F10 Balanced  |  {clock}"), theme::TEXT_FAINT)
+            (format!("ACPI: {interface}  |  HOTKEYS: F6 Cycle Profiles, F7 Stealth Mode  |  {clock}"), theme::TEXT_FAINT)
         };
         painter.text(
             &message,
@@ -1465,9 +1416,6 @@ unsafe extern "system" fn wndproc(
                     match id {
                         HOTKEY_F6 => (*app).cycle_profile(),
                         HOTKEY_F7 => (*app).toggle_stealth(),
-                        HOTKEY_F8 => (*app).macro_overdrive(),
-                        HOTKEY_F9 => (*app).macro_quiet(),
-                        HOTKEY_F10 => (*app).macro_balanced(),
                         _ => {}
                     }
                 }
@@ -1483,9 +1431,6 @@ unsafe extern "system" fn wndproc(
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_F6);
                 UnregisterHotKey(hwnd, HOTKEY_F7);
-                UnregisterHotKey(hwnd, HOTKEY_F8);
-                UnregisterHotKey(hwnd, HOTKEY_F9);
-                UnregisterHotKey(hwnd, HOTKEY_F10);
                 PostQuitMessage(0);
                 0
             }
