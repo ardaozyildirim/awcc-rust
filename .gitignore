@@ -6,6 +6,8 @@
 *.tmp
 *.zip
 *.lnk
+*.pfx
+*.cer
 release-notes.md
 .DS_Store
 Thumbs.db

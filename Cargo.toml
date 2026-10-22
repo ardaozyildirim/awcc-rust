@@ -28,3 +28,6 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 wmi = "0.18"
+
+[build-dependencies]
+winres = "0.1"

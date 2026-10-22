@@ -2021,7 +2021,14 @@ fn run() -> Result<()> {
     let class_name = ui::wide(CLASS_NAME);
     let title = ui::wide(APP_TITLE);
 
-    let icon = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
+    let icon = unsafe {
+        let custom = LoadIconW(instance, 1 as *const u16);
+        if !custom.is_null() {
+            custom
+        } else {
+            LoadIconW(null_mut(), IDI_APPLICATION)
+        }
+    };
     let cursor = unsafe { LoadCursorW(null_mut(), IDC_ARROW) };
 
     let window_class = WNDCLASSW {
@@ -2071,6 +2078,8 @@ fn run() -> Result<()> {
     }
 
     unsafe {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, icon as isize);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, icon as isize);
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
 
