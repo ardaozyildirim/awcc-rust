@@ -4,5 +4,6 @@
 *.pdb
 *.log
 *.tmp
+*.lnk
 .DS_Store
 Thumbs.db
