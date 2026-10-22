@@ -27,22 +27,25 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
 pub mod theme {
     use super::argb;
 
-    pub const BG: u32 = argb(255, 10, 13, 20);           // Alienware Deep Charcoal
-    pub const CARD: u32 = argb(255, 17, 22, 33);         // Alienware Gunmetal Card
-    pub const CARD_HOVER: u32 = argb(255, 23, 31, 46);   // Card hover
-    pub const CARD_ACTIVE: u32 = argb(255, 15, 34, 52);  // Card active
-    pub const BORDER: u32 = argb(255, 28, 38, 56);       // Crisp border
-    pub const BORDER_HOVER: u32 = argb(255, 45, 68, 98); // Border hover
-    pub const TEXT: u32 = argb(255, 245, 248, 252);      // Crisp pure white
-    pub const TEXT_DIM: u32 = argb(255, 150, 168, 192);  // Muted secondary text
-    pub const TEXT_FAINT: u32 = argb(255, 96, 114, 138); // Faint hints
-    pub const ACCENT: u32 = argb(255, 0, 229, 255);      // Alienware Electric Cyan (#00E5FF)
-    pub const ACCENT_DIM: u32 = argb(255, 0, 140, 175);  // Deep cyan
-    pub const ACCENT_GLOW: u32 = argb(75, 0, 229, 255);  // Neon Cyan Glow
-    pub const GOOD: u32 = argb(255, 0, 230, 118);        // Eco Green (#00E676)
-    pub const WARN: u32 = argb(255, 255, 171, 0);        // Performance Amber (#FFAB00)
-    pub const BAD: u32 = argb(255, 255, 82, 82);         // Overdrive Hot Red (#FF5252)
-    pub const TRACK: u32 = argb(255, 27, 35, 50);        // Slider track
+    // Shadcn Zinc Dark Theme
+    pub const BG: u32 = argb(255, 9, 9, 11);              // zinc-950 #09090b
+    pub const CARD: u32 = argb(255, 18, 18, 22);          // zinc-900 / card #121216
+    pub const CARD_HOVER: u32 = argb(255, 26, 26, 32);    // zinc-800 hover
+    pub const CARD_ACTIVE: u32 = argb(255, 15, 34, 52);   // active with cyan tint
+    pub const BORDER: u32 = argb(255, 39, 39, 46);        // zinc-800 #27272e
+    pub const BORDER_HOVER: u32 = argb(255, 63, 63, 74);  // zinc-700
+    pub const TEXT: u32 = argb(255, 250, 250, 250);       // zinc-50 #fafafa
+    pub const TEXT_DIM: u32 = argb(255, 161, 161, 170);   // zinc-400 #a1a1aa
+    pub const TEXT_FAINT: u32 = argb(255, 113, 113, 122); // zinc-500 #71717a
+    pub const ACCENT: u32 = argb(255, 0, 229, 255);       // Alienware Electric Cyan
+    pub const ACCENT_DIM: u32 = argb(255, 0, 120, 150);   // Cyan dim
+    pub const ACCENT_GLOW: u32 = argb(60, 0, 229, 255);   // Subtle glow
+    pub const GOOD: u32 = argb(255, 34, 197, 94);         // emerald-500
+    pub const WARN: u32 = argb(255, 234, 179, 8);         // amber-500
+    pub const BAD: u32 = argb(255, 239, 68, 68);          // red-500
+    pub const TRACK: u32 = argb(255, 30, 30, 36);         // zinc-800 track
+    pub const TAB_BG: u32 = argb(255, 20, 20, 25);        // Segmented tab bar bg
+    pub const TAB_ACTIVE: u32 = argb(255, 39, 39, 48);    // Active tab button
 }
 
 #[allow(dead_code)]

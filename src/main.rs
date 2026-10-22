@@ -5,7 +5,7 @@ mod load;
 mod log;
 mod ui;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use awcc::{
     Awcc, FAN_CPU, FAN_GPU, PROFILE_CUSTOM, PROFILE_PERFORMANCE, PROFILE_QUIET, PROFILES, Status,
     TccStatus,
@@ -23,7 +23,8 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F6, VK_F7,
+    MOD_ALT, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F1,
+    VK_F2, VK_F3, VK_F6, VK_F7,
 };
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -35,6 +36,9 @@ const POLL_MS: u32 = 2000;
 
 const HOTKEY_F6: i32 = 1001;
 const HOTKEY_F7: i32 = 1002;
+const HOTKEY_M1: i32 = 1011;
+const HOTKEY_M2: i32 = 1012;
+const HOTKEY_M3: i32 = 1013;
 
 const UI_WIDTH: f32 = 700.0;
 const UI_HEIGHT: f32 = 830.0;
@@ -51,18 +55,34 @@ const MODE_HINTS: [&str; 6] = [
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ActiveTab {
+    Performance,
+    Macros,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Hit {
     None,
+    TabPerf,
+    TabMacros,
     Profile(usize),
     Stealth,
     TccTrack,
     TccApply,
+    TriggerM1,
+    TriggerM2,
+    TriggerM3,
+    SetM1(usize),
+    SetM2(usize),
+    SetM3(usize),
     Refresh,
     Logs,
     Elevate,
 }
 
 struct Layout {
+    tab_perf: Rect,
+    tab_macros: Rect,
     cpu: Rect,
     gpu: Rect,
     fans: Rect,
@@ -72,6 +92,15 @@ struct Layout {
     stealth: Rect,
     tcc_track: Rect,
     tcc_apply: Rect,
+    m1_card: Rect,
+    m1_btn: Rect,
+    m1_opts: [Rect; 3],
+    m2_card: Rect,
+    m2_btn: Rect,
+    m2_opts: [Rect; 3],
+    m3_card: Rect,
+    m3_btn: Rect,
+    m3_opts: [Rect; 3],
     refresh: Rect,
     logs: Rect,
     elevate: Rect,
@@ -82,14 +111,20 @@ fn build_layout() -> Layout {
     let card_w = UI_WIDTH - PAD * 2.0;
     let half = (card_w - 16.0) / 2.0;
 
-    let y_cpu = 96.0;
-    let h_cpu = 186.0;
-    let y_fans = y_cpu + h_cpu + 14.0;
-    let h_fans = 116.0;
-    let y_profile = y_fans + h_fans + 14.0;
+    let y_tab = 66.0;
+    let tab_w = 210.0;
+    let tab_h = 32.0;
+    let tab_perf = Rect::new(PAD, y_tab, tab_w, tab_h);
+    let tab_macros = Rect::new(PAD + tab_w + 10.0, y_tab, tab_w, tab_h);
+
+    let y_cpu = 110.0;
+    let h_cpu = 176.0;
+    let y_fans = y_cpu + h_cpu + 12.0;
+    let h_fans = 114.0;
+    let y_profile = y_fans + h_fans + 12.0;
     let h_profile = 214.0;
-    let y_tcc = y_profile + h_profile + 14.0;
-    let h_tcc = 124.0;
+    let y_tcc = y_profile + h_profile + 12.0;
+    let h_tcc = 120.0;
     let y_footer = y_tcc + h_tcc + 14.0;
 
     let inner = card_w - 40.0;
@@ -107,19 +142,56 @@ fn build_layout() -> Layout {
         );
     }
 
+    // Alienware 16 Aurora AC16250 Dedicated Macro Cards (M1, M2, M3)
+    let y_m1 = 110.0;
+    let h_m = 202.0;
+    let y_m2 = y_m1 + h_m + 14.0;
+    let y_m3 = y_m2 + h_m + 14.0;
+
+    let m1_card = Rect::new(PAD, y_m1, card_w, h_m);
+    let m2_card = Rect::new(PAD, y_m2, card_w, h_m);
+    let m3_card = Rect::new(PAD, y_m3, card_w, h_m);
+
+    let m1_btn = Rect::new(PAD + card_w - 20.0 - 120.0, y_m1 + 20.0, 120.0, 34.0);
+    let m2_btn = Rect::new(PAD + card_w - 20.0 - 120.0, y_m2 + 20.0, 120.0, 34.0);
+    let m3_btn = Rect::new(PAD + card_w - 20.0 - 120.0, y_m3 + 20.0, 120.0, 34.0);
+
+    let opt_w = (card_w - 40.0 - 20.0) / 3.0;
+    let opt_h = 56.0;
+    let mut m1_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
+    let mut m2_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
+    let mut m3_opts = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
+    for i in 0..3 {
+        let x = PAD + 20.0 + i as f32 * (opt_w + 10.0);
+        m1_opts[i] = Rect::new(x, y_m1 + 124.0, opt_w, opt_h);
+        m2_opts[i] = Rect::new(x, y_m2 + 124.0, opt_w, opt_h);
+        m3_opts[i] = Rect::new(x, y_m3 + 124.0, opt_w, opt_h);
+    }
+
     Layout {
+        tab_perf,
+        tab_macros,
         cpu: Rect::new(PAD, y_cpu, half, h_cpu),
         gpu: Rect::new(PAD + half + 16.0, y_cpu, half, h_cpu),
         fans: Rect::new(PAD, y_fans, card_w, h_fans),
         profile: Rect::new(PAD, y_profile, card_w, h_profile),
         tcc: Rect::new(PAD, y_tcc, card_w, h_tcc),
         tiles,
-        stealth: Rect::new(PAD + card_w - 20.0 - 54.0, y_profile + 20.0, 54.0, 28.0),
+        stealth: Rect::new(PAD + card_w - 20.0 - 54.0, y_profile + 18.0, 54.0, 28.0),
         tcc_track: Rect::new(PAD + 20.0, y_tcc + 64.0, 392.0, 8.0),
         tcc_apply: Rect::new(PAD + card_w - 20.0 - 96.0, y_tcc + 50.0, 96.0, 34.0),
+        m1_card,
+        m1_btn,
+        m1_opts,
+        m2_card,
+        m2_btn,
+        m2_opts,
+        m3_card,
+        m3_btn,
+        m3_opts,
         refresh: Rect::new(UI_WIDTH - PAD - 84.0, y_footer, 84.0, 32.0),
         logs: Rect::new(UI_WIDTH - PAD - 84.0 - 10.0 - 108.0, y_footer, 108.0, 32.0),
-        elevate: Rect::new(UI_WIDTH - PAD - 92.0, 22.0, 92.0, 32.0),
+        elevate: Rect::new(UI_WIDTH - PAD - 92.0, 20.0, 92.0, 32.0),
         footer: Rect::new(PAD, y_footer, card_w, 32.0),
     }
 }
@@ -139,13 +211,17 @@ struct App {
     notice: Option<String>,
     stealth_on: bool,
     stealth_previous: u8,
+    active_tab: ActiveTab,
+    m1_action: usize,
+    m2_action: usize,
+    m3_action: usize,
     hover: Hit,
     pressed: Hit,
     dragging: bool,
     layout: Layout,
     buffer_dc: HDC,
     buffer_bitmap: HBITMAP,
-    buffer_old: HBITMAP,
+    buffer_old: HGDIOBJ,
     buffer_w: i32,
     buffer_h: i32,
     painter: Option<Painter>,
@@ -153,10 +229,11 @@ struct App {
 
 impl App {
     fn new() -> Self {
+        let admin = unsafe { IsUserAnAdmin() } != 0;
         Self {
             hwnd: null_mut(),
             scale: 1.0,
-            admin: unsafe { IsUserAnAdmin() != 0 },
+            admin,
             awcc: None,
             status: None,
             tcc: None,
@@ -168,6 +245,10 @@ impl App {
             notice: None,
             stealth_on: false,
             stealth_previous: PROFILE_PERFORMANCE,
+            active_tab: ActiveTab::Performance,
+            m1_action: 0,
+            m2_action: 0,
+            m3_action: 0,
             hover: Hit::None,
             pressed: Hit::None,
             dragging: false,
@@ -224,9 +305,15 @@ impl App {
             );
             SetTimer(hwnd, TIMER_ID, POLL_MS, None);
 
-            // Register Alienware keyboard hotkeys (F6 Thermal Cycle, F7 Stealth Mode)
+            // Register Alienware keyboard hotkeys
+            // F6: Thermal Profile Cycle
+            // F7: Stealth Mode Toggle
+            // Alt+F1..F3: Dedicated M1, M2, M3 Macro keys
             RegisterHotKey(hwnd, HOTKEY_F6, MOD_NOREPEAT, VK_F6 as u32);
             RegisterHotKey(hwnd, HOTKEY_F7, MOD_NOREPEAT, VK_F7 as u32);
+            RegisterHotKey(hwnd, HOTKEY_M1, MOD_ALT | MOD_NOREPEAT, VK_F1 as u32);
+            RegisterHotKey(hwnd, HOTKEY_M2, MOD_ALT | MOD_NOREPEAT, VK_F2 as u32);
+            RegisterHotKey(hwnd, HOTKEY_M3, MOD_ALT | MOD_NOREPEAT, VK_F3 as u32);
         }
 
         self.refresh();
@@ -287,7 +374,6 @@ impl App {
             .as_ref()
             .and_then(|tcc| tcc.max_offset)
             .unwrap_or(0)
-            .clamp(0, 255)
     }
 
     fn tcc_current(&self) -> i32 {
@@ -295,34 +381,20 @@ impl App {
     }
 
     fn tcc_value(&self) -> i32 {
-        self.tcc_pending.clamp(0, self.tcc_max())
-    }
-
-    fn invalidate(&self) {
-        unsafe {
-            InvalidateRect(self.hwnd, null(), 0);
+        if self.dragging {
+            self.tcc_pending
+        } else {
+            self.tcc_current()
         }
     }
 
-    fn hit_at(&self, x: f32, y: f32) -> Hit {
+    fn hit_test(&self, x: f32, y: f32) -> Hit {
         let layout = &self.layout;
-        for (index, tile) in layout.tiles.iter().enumerate() {
-            if tile.contains(x, y) {
-                return Hit::Profile(index);
-            }
+        if layout.tab_perf.contains(x, y) {
+            return Hit::TabPerf;
         }
-        if layout.stealth.contains(x, y) {
-            return Hit::Stealth;
-        }
-        if layout.tcc_track.contains(x, y)
-            || layout
-                .tcc_apply
-                .contains(x, y)
-        {
-            if layout.tcc_apply.contains(x, y) {
-                return Hit::TccApply;
-            }
-            return Hit::TccTrack;
+        if layout.tab_macros.contains(x, y) {
+            return Hit::TabMacros;
         }
         if layout.refresh.contains(x, y) {
             return Hit::Refresh;
@@ -330,34 +402,71 @@ impl App {
         if layout.logs.contains(x, y) {
             return Hit::Logs;
         }
-        if layout.elevate.contains(x, y) {
+        if !self.admin && layout.elevate.contains(x, y) {
             return Hit::Elevate;
         }
-        Hit::None
-    }
 
-    fn slider_value_at(&self, x: f32) -> i32 {
-        let track = self.layout.tcc_track;
-        let max = self.tcc_max();
-        if max <= 0 {
-            return 0;
+        match self.active_tab {
+            ActiveTab::Performance => {
+                for (index, tile) in layout.tiles.iter().enumerate() {
+                    if tile.contains(x, y) {
+                        return Hit::Profile(index);
+                    }
+                }
+                if layout.stealth.contains(x, y) {
+                    return Hit::Stealth;
+                }
+                if layout.tcc_track.contains(x, y)
+                    || (x >= layout.tcc_track.x && x <= layout.tcc_track.x + layout.tcc_track.w && (y - (layout.tcc_track.y + 4.0)).abs() <= 12.0)
+                {
+                    return Hit::TccTrack;
+                }
+                if layout.tcc_apply.contains(x, y) {
+                    return Hit::TccApply;
+                }
+            }
+            ActiveTab::Macros => {
+                if layout.m1_btn.contains(x, y) {
+                    return Hit::TriggerM1;
+                }
+                if layout.m2_btn.contains(x, y) {
+                    return Hit::TriggerM2;
+                }
+                if layout.m3_btn.contains(x, y) {
+                    return Hit::TriggerM3;
+                }
+                for (i, opt) in layout.m1_opts.iter().enumerate() {
+                    if opt.contains(x, y) {
+                        return Hit::SetM1(i);
+                    }
+                }
+                for (i, opt) in layout.m2_opts.iter().enumerate() {
+                    if opt.contains(x, y) {
+                        return Hit::SetM2(i);
+                    }
+                }
+                for (i, opt) in layout.m3_opts.iter().enumerate() {
+                    if opt.contains(x, y) {
+                        return Hit::SetM3(i);
+                    }
+                }
+            }
         }
-        let radius = 9.0;
-        let usable = (track.w - radius * 2.0).max(1.0);
-        let ratio = ((x - track.x - radius) / usable).clamp(0.0, 1.0);
-        (ratio * max as f32).round() as i32
+
+        Hit::None
     }
 
     fn on_mouse_move(&mut self, x: f32, y: f32) {
         if self.dragging {
-            let value = self.slider_value_at(x);
-            if value != self.tcc_pending {
-                self.tcc_pending = value;
-                self.invalidate();
-            }
+            let track = self.layout.tcc_track;
+            let ratio = ((x - track.x) / track.w).clamp(0.0, 1.0);
+            let max = self.tcc_max();
+            self.tcc_pending = (ratio * max as f32).round() as i32;
+            self.invalidate();
             return;
         }
-        let hit = self.hit_at(x, y);
+
+        let hit = self.hit_test(x, y);
         if hit != self.hover {
             self.hover = hit;
             self.invalidate();
@@ -365,44 +474,76 @@ impl App {
     }
 
     fn on_mouse_down(&mut self, x: f32, y: f32) {
-        let hit = self.hit_at(x, y);
+        let hit = self.hit_test(x, y);
         self.pressed = hit;
+
         if hit == Hit::TccTrack {
             self.dragging = true;
             unsafe {
                 SetCapture(self.hwnd);
             }
-            let value = self.slider_value_at(x);
-            self.tcc_pending = value;
+            let track = self.layout.tcc_track;
+            let ratio = ((x - track.x) / track.w).clamp(0.0, 1.0);
+            let max = self.tcc_max();
+            self.tcc_pending = (ratio * max as f32).round() as i32;
             self.invalidate();
-        } else if hit != Hit::None {
-            self.invalidate();
+            return;
         }
+
+        self.invalidate();
     }
 
     fn on_mouse_up(&mut self, x: f32, y: f32) {
-        let hit = self.hit_at(x, y);
-        let pressed = self.pressed;
-        self.pressed = Hit::None;
-        self.dragging = false;
-        unsafe {
-            ReleaseCapture();
+        if self.dragging {
+            self.dragging = false;
+            unsafe {
+                ReleaseCapture();
+            }
+            self.pressed = Hit::None;
+            self.invalidate();
+            return;
         }
-        if pressed != Hit::None && pressed == hit {
+
+        let hit = self.hit_test(x, y);
+        if hit == self.pressed && hit != Hit::None {
             self.activate(hit);
         }
+        self.pressed = Hit::None;
         self.invalidate();
     }
 
     fn activate(&mut self, hit: Hit) {
         match hit {
+            Hit::TabPerf => {
+                self.active_tab = ActiveTab::Performance;
+                self.invalidate();
+            }
+            Hit::TabMacros => {
+                self.active_tab = ActiveTab::Macros;
+                self.invalidate();
+            }
             Hit::Profile(index) => self.apply_profile(index),
             Hit::Stealth => self.toggle_stealth(),
             Hit::TccApply => self.apply_tcc(),
+            Hit::TriggerM1 => self.trigger_m1(),
+            Hit::TriggerM2 => self.trigger_m2(),
+            Hit::TriggerM3 => self.trigger_m3(),
+            Hit::SetM1(idx) => {
+                self.m1_action = idx;
+                self.invalidate();
+            }
+            Hit::SetM2(idx) => {
+                self.m2_action = idx;
+                self.invalidate();
+            }
+            Hit::SetM3(idx) => {
+                self.m3_action = idx;
+                self.invalidate();
+            }
             Hit::Refresh => self.refresh(),
             Hit::Logs => self.open_logs(),
             Hit::Elevate => self.elevate(),
-            Hit::TccTrack | Hit::None => {}
+            Hit::None | Hit::TccTrack => {}
         }
     }
 
@@ -463,7 +604,7 @@ impl App {
             .status
             .as_ref()
             .map(|status| status.current_profile)
-            .unwrap_or(PROFILE_PERFORMANCE);
+            .unwrap_or(0xFF);
         let supported = self
             .status
             .as_ref()
@@ -477,22 +618,18 @@ impl App {
         } else if supported.contains(&PROFILE_PERFORMANCE) {
             PROFILE_PERFORMANCE
         } else {
-            supported.first().copied().unwrap_or(PROFILE_PERFORMANCE)
+            0xA0
         };
 
-        let target = if was_on {
-            if supported.contains(&previous) {
-                previous
-            } else if supported.contains(&PROFILE_PERFORMANCE) {
-                PROFILE_PERFORMANCE
-            } else {
-                supported.first().copied().unwrap_or(PROFILE_PERFORMANCE)
-            }
-        } else {
-            PROFILE_QUIET
-        };
+        let target = if was_on { previous } else { PROFILE_QUIET };
+        log::info(format_args!(
+            "stealth toggle: was_on={was_on} target=0x{target:02X}"
+        ));
 
-        let result = self.awcc.as_ref().map(|awcc| awcc.set_profile_id(target));
+        let result = self
+            .awcc
+            .as_ref()
+            .map(|awcc| awcc.set_profile_id(target));
         match result {
             Some(Ok(id)) => {
                 if !was_on {
@@ -563,6 +700,77 @@ impl App {
         }
     }
 
+    fn trigger_m1(&mut self) {
+        match self.m1_action {
+            0 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA4) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M1 (F1): Turbo Overdrive Profile Applied".into());
+                }
+            }
+            1 => {
+                let _ = self.awcc.as_ref().map(|awcc| awcc.set_tcc_offset(15));
+                self.notice = Some("M1 (F1): Max Cooling (TCC 15C limit) Applied".into());
+                self.refresh();
+            }
+            2 => {
+                let op = ui::wide("open");
+                let target = ui::wide("taskmgr.exe");
+                unsafe {
+                    ShellExecuteW(null_mut(), op.as_ptr(), target.as_ptr(), null(), null(), SW_SHOWNORMAL);
+                }
+                self.notice = Some("M1 (F1): Launched Task Manager".into());
+                self.invalidate();
+            }
+            _ => {}
+        }
+    }
+
+    fn trigger_m2(&mut self) {
+        match self.m2_action {
+            0 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_QUIET) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M2 (F2): Whisper Quiet (Silent 0 dB) Applied".into());
+                }
+            }
+            1 => {
+                self.toggle_stealth();
+                self.notice = Some("M2 (F2): Stealth Mode Toggled".into());
+            }
+            2 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA2) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M2 (F2): Eco Battery Profile Applied".into());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn trigger_m3(&mut self) {
+        match self.m3_action {
+            0 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA0) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M3 (F3): Balanced Everyday Profile Restored".into());
+                }
+            }
+            1 => {
+                if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_PERFORMANCE) {
+                    self.apply_profile(pos);
+                    self.notice = Some("M3 (F3): Performance Boost Mode Applied".into());
+                }
+            }
+            2 => {
+                let _ = self.awcc.as_ref().map(|awcc| awcc.set_tcc_offset(0));
+                self.notice = Some("M3 (F3): CPU Thermal Limit Reset to Factory (0C)".into());
+                self.refresh();
+            }
+            _ => {}
+        }
+    }
+
     fn apply_tcc(&mut self) {
         if !self.can_write() {
             self.error = Some("Administrator access is required to change the CPU limit.".into());
@@ -606,138 +814,117 @@ impl App {
             return;
         }
         let editor = ui::wide("notepad.exe");
-        let file = ui::wide(&path);
-        let result = unsafe {
+        let wide_path = ui::wide(&path);
+        let operation = ui::wide("open");
+        unsafe {
             ShellExecuteW(
-                self.hwnd,
-                null(),
+                null_mut(),
+                operation.as_ptr(),
                 editor.as_ptr(),
-                file.as_ptr(),
+                wide_path.as_ptr(),
                 null(),
                 SW_SHOWNORMAL,
-            )
-        };
-        if result as isize <= 32 {
-            self.show_error("Could not open the log file.");
+            );
         }
     }
 
     fn elevate(&self) {
-        log::info(format_args!("elevate requested"));
-        let mut path = [0u16; 1024];
-        let length = unsafe { GetModuleFileNameW(null_mut(), path.as_mut_ptr(), path.len() as u32) };
-        if length == 0 || length as usize >= path.len() {
-            self.show_error("Could not determine the executable path.");
-            return;
-        }
-        path[length as usize] = 0;
-        let operation = ui::wide("runas");
-        let result = unsafe {
-            ShellExecuteW(
-                self.hwnd,
-                operation.as_ptr(),
-                path.as_ptr(),
-                null(),
-                null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        if result as isize <= 32 {
-            self.show_error("Could not restart elevated.");
-            return;
-        }
-        log::info(format_args!("elevate launched new process; closing"));
-        unsafe {
-            PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
+        log::info(format_args!("elevate requested from UI"));
+        if let Err(error) = relaunch_elevated() {
+            log::error(format_args!("elevation failed: {error:#}"));
+            self.show_error(&format!("Elevation failed: {error:#}"));
+        } else {
+            unsafe {
+                PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
+            }
         }
     }
 
     fn show_error(&self, message: &str) {
-        log::error(format_args!("dialog: {message}"));
-        let message = ui::wide(message);
+        let wide_msg = ui::wide(message);
         let title = ui::wide(APP_TITLE);
         unsafe {
             MessageBoxW(
                 self.hwnd,
-                message.as_ptr(),
+                wide_msg.as_ptr(),
                 title.as_ptr(),
                 MB_OK | MB_ICONERROR,
             );
         }
     }
 
-    fn ensure_buffer(&mut self, width: i32, height: i32) {
-        if !self.buffer_dc.is_null() && self.buffer_w == width && self.buffer_h == height {
-            return;
-        }
-        unsafe {
-            if !self.buffer_dc.is_null() {
-                SelectObject(self.buffer_dc, self.buffer_old);
-                DeleteObject(self.buffer_bitmap as HGDIOBJ);
-                DeleteDC(self.buffer_dc);
+    fn invalidate(&self) {
+        if !self.hwnd.is_null() {
+            unsafe {
+                InvalidateRect(self.hwnd, null(), 0);
             }
-            let screen = GetDC(self.hwnd);
-            self.buffer_dc = CreateCompatibleDC(screen);
-            self.buffer_bitmap = CreateCompatibleBitmap(screen, width, height);
-            self.buffer_old = SelectObject(self.buffer_dc, self.buffer_bitmap);
-            ReleaseDC(self.hwnd, screen);
-        }
-        self.buffer_w = width;
-        self.buffer_h = height;
-        self.painter = Painter::new(self.buffer_dc, self.scale);
-        if self.painter.is_none() {
-            log::error(format_args!("GDI+ painter could not be created"));
         }
     }
 
     fn paint(&mut self, hdc: HDC) {
+        let mut client: RECT = unsafe { std::mem::zeroed() };
         unsafe {
-            let mut rect: RECT = std::mem::zeroed();
-            GetClientRect(self.hwnd, &mut rect);
-            let width = rect.right - rect.left;
-            let height = rect.bottom - rect.top;
-            self.ensure_buffer(width, height);
-            if self.buffer_dc.is_null() {
-                return;
-            }
-            let Some(painter) = self.painter.as_ref() else {
-                log::error(format_args!("paint: no painter"));
-                return;
-            };
-            log::debug(format_args!("paint: {width}x{height}"));
-            self.draw(painter);
-            BitBlt(hdc, 0, 0, width, height, self.buffer_dc, 0, 0, SRCCOPY);
-            log::debug(format_args!("paint: done"));
+            GetClientRect(self.hwnd, &mut client);
         }
-    }
+        let width = client.right - client.left;
+        let height = client.bottom - client.top;
+        if width <= 0 || height <= 0 {
+            return;
+        }
 
-    fn draw(&self, painter: &Painter) {
-        log::debug(format_args!("draw: start"));
-        painter.fill_rect(Rect::new(0.0, 0.0, UI_WIDTH, UI_HEIGHT), theme::BG);
+        if self.buffer_dc.is_null() || self.buffer_w != width || self.buffer_h != height {
+            unsafe {
+                if !self.buffer_dc.is_null() {
+                    SelectObject(self.buffer_dc, self.buffer_old);
+                    DeleteObject(self.buffer_bitmap as HGDIOBJ);
+                    DeleteDC(self.buffer_dc);
+                }
+                self.buffer_dc = CreateCompatibleDC(hdc);
+                self.buffer_bitmap = CreateCompatibleBitmap(hdc, width, height);
+                self.buffer_old = SelectObject(self.buffer_dc, self.buffer_bitmap as HGDIOBJ);
+                self.buffer_w = width;
+                self.buffer_h = height;
+                self.painter = Painter::new(self.buffer_dc, self.scale);
+            }
+        }
+
+        let Some(painter) = self.painter.as_ref() else {
+            return;
+        };
+
+        let screen = Rect::new(0.0, 0.0, UI_WIDTH, UI_HEIGHT);
+        painter.fill_rect(screen, theme::BG);
 
         self.draw_header(painter);
-        self.draw_gauge_card(
-            painter,
-            self.layout.cpu,
-            "CPU",
-            "0x01",
-            self.temp_of(0x01),
-            self.loads.cpu,
-        );
-        self.draw_gauge_card(
-            painter,
-            self.layout.gpu,
-            "GPU",
-            "0x06",
-            self.temp_of(0x06),
-            self.loads.gpu,
-        );
-        log::debug(format_args!("draw: gauges"));
-        self.draw_fans(painter);
-        self.draw_profiles(painter);
-        self.draw_tcc(painter);
+        self.draw_tabs(painter);
+
+        match self.active_tab {
+            ActiveTab::Performance => {
+                self.draw_telemetry(painter);
+                self.draw_fans(painter);
+                self.draw_profiles(painter);
+                self.draw_tcc(painter);
+            }
+            ActiveTab::Macros => {
+                self.draw_macros_tab(painter);
+            }
+        }
+
         self.draw_footer(painter);
-        log::debug(format_args!("draw: done"));
+
+        unsafe {
+            BitBlt(
+                hdc,
+                0,
+                0,
+                width,
+                height,
+                self.buffer_dc,
+                0,
+                0,
+                SRCCOPY,
+            );
+        }
     }
 
     fn temp_of(&self, id: u8) -> Option<u8> {
@@ -759,23 +946,23 @@ impl App {
 
     fn draw_header(&self, painter: &Painter) {
         painter.text(
-            "ALIENWARE 16 AURORA",
-            Rect::new(PAD, 18.0, 300.0, 16.0),
+            "ALIENWARE 16 AURORA AC16250",
+            Rect::new(PAD, 16.0, 320.0, 16.0),
             FontKind::Tiny,
             theme::ACCENT,
             Align::Left,
         );
         painter.text(
             "COMMAND CENTER",
-            Rect::new(PAD, 34.0, 320.0, 32.0),
+            Rect::new(PAD, 32.0, 320.0, 30.0),
             FontKind::Title,
             theme::TEXT,
             Align::Left,
         );
-        painter.fill_circle((PAD + 276.0, 52.0), 4.0, theme::ACCENT);
+        painter.fill_circle((PAD + 276.0, 48.0), 4.0, theme::ACCENT);
         painter.text(
             "HARDWARE ACPI ACTIVE",
-            Rect::new(PAD + 288.0, 44.0, 180.0, 16.0),
+            Rect::new(PAD + 288.0, 40.0, 180.0, 16.0),
             FontKind::Tiny,
             theme::TEXT_FAINT,
             Align::Left,
@@ -791,7 +978,7 @@ impl App {
         } else {
             UI_WIDTH - PAD - 102.0
         };
-        let pill = Rect::new(pill_right - 142.0, 24.0, 142.0, 32.0);
+        let pill = Rect::new(pill_right - 142.0, 20.0, 142.0, 32.0);
         painter.fill_round_rect(pill, 16.0, mix(theme::CARD, color, 0.15));
         painter.stroke_glow_round_rect(pill, 16.0, color, theme::ACCENT_GLOW);
         painter.fill_circle((pill.x + 18.0, pill.y + 16.0), 4.0, color);
@@ -805,6 +992,66 @@ impl App {
         if !self.admin {
             self.draw_button(painter, self.layout.elevate, "Elevate", Hit::Elevate, true);
         }
+    }
+
+    fn draw_tabs(&self, painter: &Painter) {
+        let is_perf = self.active_tab == ActiveTab::Performance;
+        let is_macro = self.active_tab == ActiveTab::Macros;
+
+        let perf_box = self.layout.tab_perf;
+        let macro_box = self.layout.tab_macros;
+
+        let bar = Rect::new(perf_box.x - 4.0, perf_box.y - 4.0, perf_box.w + macro_box.w + 18.0, perf_box.h + 8.0);
+        painter.fill_round_rect(bar, 10.0, theme::TAB_BG);
+        painter.stroke_round_rect(bar, 10.0, theme::BORDER, 1.0);
+
+        painter.fill_round_rect(perf_box, 8.0, if is_perf { theme::TAB_ACTIVE } else { theme::TAB_BG });
+        if is_perf {
+            painter.stroke_glow_round_rect(perf_box, 8.0, theme::ACCENT, theme::ACCENT_GLOW);
+        }
+        painter.text(
+            "THERMALS & FANS",
+            perf_box,
+            FontKind::Label,
+            if is_perf { theme::TEXT } else { theme::TEXT_DIM },
+            Align::Center,
+        );
+
+        painter.fill_round_rect(macro_box, 8.0, if is_macro { theme::TAB_ACTIVE } else { theme::TAB_BG });
+        if is_macro {
+            painter.stroke_glow_round_rect(macro_box, 8.0, theme::ACCENT, theme::ACCENT_GLOW);
+        }
+        painter.text(
+            "MACRO KEYS (M1, M2, M3)",
+            macro_box,
+            FontKind::Label,
+            if is_macro { theme::TEXT } else { theme::TEXT_DIM },
+            Align::Center,
+        );
+    }
+
+    fn draw_telemetry(&self, painter: &Painter) {
+        let cpu_temp = self.temp_of(awcc::SENSOR_CPU);
+        let gpu_temp = self.temp_of(awcc::SENSOR_GPU);
+        let cpu_load = self.loads.cpu.map(|load| load.clamp(0, 100));
+        let gpu_load = self.loads.gpu.map(|load| load.clamp(0, 100));
+
+        self.draw_gauge_card(
+            painter,
+            self.layout.cpu,
+            "CPU TELEMETRY",
+            "SENSOR 0x01",
+            cpu_temp,
+            cpu_load,
+        );
+        self.draw_gauge_card(
+            painter,
+            self.layout.gpu,
+            "GPU TELEMETRY",
+            "SENSOR 0x06",
+            gpu_temp,
+            gpu_load,
+        );
     }
 
     fn draw_gauge_card(
@@ -821,7 +1068,7 @@ impl App {
 
         painter.text(
             title,
-            Rect::new(card.x + 22.0, card.y + 16.0, 120.0, 20.0),
+            Rect::new(card.x + 22.0, card.y + 16.0, 140.0, 20.0),
             FontKind::Label,
             theme::TEXT,
             Align::Left,
@@ -916,7 +1163,7 @@ impl App {
         );
 
         let column_w = (card.w - 40.0 - 24.0) / 2.0;
-        let entries = [("CPU", FAN_CPU), ("GPU", FAN_GPU)];
+        let entries = [("CPU FAN", FAN_CPU), ("GPU FAN", FAN_GPU)];
         for (index, (label, id)) in entries.iter().enumerate() {
             let x = card.x + 20.0 + index as f32 * (column_w + 24.0);
             let fan = self.fan_of(*id);
@@ -947,6 +1194,25 @@ impl App {
                 theme::TEXT_FAINT,
                 Align::Left,
             );
+
+            // Silent 0 dB status or active status
+            if rpm == Some(0) {
+                painter.text(
+                    "Silent 0 dB (Passive)",
+                    Rect::new(x + 80.0, card.y + 36.0, column_w - 80.0, 18.0),
+                    FontKind::Tiny,
+                    theme::GOOD,
+                    Align::Right,
+                );
+            } else if let Some(_v) = rpm.filter(|&v| v > 0) {
+                painter.text(
+                    "Active Cooling",
+                    Rect::new(x + 80.0, card.y + 36.0, column_w - 80.0, 18.0),
+                    FontKind::Tiny,
+                    theme::ACCENT,
+                    Align::Right,
+                );
+            }
 
             let max = fan.and_then(|fan| fan.max_rpm).unwrap_or(0);
             let bar = Rect::new(x, card.y + 88.0, column_w - 40.0, 6.0);
@@ -1102,6 +1368,111 @@ impl App {
         );
     }
 
+    fn draw_macros_tab(&self, painter: &Painter) {
+        let m1_names = ["Turbo Overdrive", "Max Cooling (-15C)", "Task Manager"];
+        let m1_hints = ["100% Fans & Clocks", "Drop CPU limit to 85C", "Open Windows Taskmgr"];
+
+        let m2_names = ["Whisper Quiet", "Stealth Toggle", "Eco Battery"];
+        let m2_hints = ["Silent 0 dB Curve", "Toggle Stealth & Dark", "Power Saving Limit"];
+
+        let m3_names = ["Balanced Daily", "Performance Boost", "Factory Defaults"];
+        let m3_hints = ["Standard Factory Curve", "Enhanced Clocks", "Reset TCC & Profile"];
+
+        let cards = [
+            ("M1", "KEY F1 (ALT+F1)", "Primary Action Key", self.layout.m1_card, self.layout.m1_btn, &self.layout.m1_opts, self.m1_action, &m1_names, &m1_hints, Hit::TriggerM1),
+            ("M2", "KEY F2 (ALT+F2)", "Acoustic & Silent Key", self.layout.m2_card, self.layout.m2_btn, &self.layout.m2_opts, self.m2_action, &m2_names, &m2_hints, Hit::TriggerM2),
+            ("M3", "KEY F3 (ALT+F3)", "Standard & Daily Key", self.layout.m3_card, self.layout.m3_btn, &self.layout.m3_opts, self.m3_action, &m3_names, &m3_hints, Hit::TriggerM3),
+        ];
+
+        for (key_id, hotkey_desc, role_desc, card, btn, opts, selected_action, names, hints, trigger_hit) in cards {
+            painter.fill_round_rect(card, 16.0, theme::CARD);
+            painter.stroke_round_rect(card, 16.0, theme::BORDER, 1.0);
+
+            // Key Badge
+            let badge = Rect::new(card.x + 20.0, card.y + 18.0, 52.0, 26.0);
+            painter.fill_round_rect(badge, 6.0, theme::CARD_ACTIVE);
+            painter.stroke_glow_round_rect(badge, 6.0, theme::ACCENT, theme::ACCENT_GLOW);
+            painter.text(key_id, badge, FontKind::Label, theme::ACCENT, Align::Center);
+
+            painter.text(
+                hotkey_desc,
+                Rect::new(card.x + 82.0, card.y + 18.0, 160.0, 16.0),
+                FontKind::Tiny,
+                theme::TEXT_FAINT,
+                Align::Left,
+            );
+            painter.text(
+                role_desc,
+                Rect::new(card.x + 82.0, card.y + 34.0, 220.0, 18.0),
+                FontKind::Label,
+                theme::TEXT,
+                Align::Left,
+            );
+
+            // Trigger Button
+            let btn_hovered = self.hover == trigger_hit || self.pressed == trigger_hit;
+            painter.fill_round_rect(
+                btn,
+                8.0,
+                if btn_hovered { theme::ACCENT } else { theme::CARD_HOVER },
+            );
+            painter.stroke_round_rect(btn, 8.0, theme::BORDER_HOVER, 1.0);
+            painter.text(
+                "Run Macro",
+                btn,
+                FontKind::Label,
+                if btn_hovered { theme::BG } else { theme::TEXT },
+                Align::Center,
+            );
+
+            // Header for actions
+            painter.text(
+                "SELECT ASSIGNED ACTION",
+                Rect::new(card.x + 20.0, card.y + 96.0, 240.0, 16.0),
+                FontKind::Tiny,
+                theme::TEXT_FAINT,
+                Align::Left,
+            );
+
+            // Option selection pills
+            for (idx, opt_rect) in opts.iter().enumerate() {
+                let active = idx == selected_action;
+                let opt_hovered = match trigger_hit {
+                    Hit::TriggerM1 => self.hover == Hit::SetM1(idx),
+                    Hit::TriggerM2 => self.hover == Hit::SetM2(idx),
+                    Hit::TriggerM3 => self.hover == Hit::SetM3(idx),
+                    _ => false,
+                };
+
+                painter.fill_round_rect(
+                    *opt_rect,
+                    10.0,
+                    if active { theme::CARD_ACTIVE } else if opt_hovered { theme::CARD_HOVER } else { theme::BG },
+                );
+                if active {
+                    painter.stroke_glow_round_rect(*opt_rect, 10.0, theme::ACCENT, theme::ACCENT_GLOW);
+                } else {
+                    painter.stroke_round_rect(*opt_rect, 10.0, theme::BORDER, 1.0);
+                }
+
+                painter.text(
+                    names[idx],
+                    Rect::new(opt_rect.x + 12.0, opt_rect.y + 10.0, opt_rect.w - 24.0, 18.0),
+                    FontKind::Label,
+                    if active { theme::ACCENT } else { theme::TEXT },
+                    Align::Left,
+                );
+                painter.text(
+                    hints[idx],
+                    Rect::new(opt_rect.x + 12.0, opt_rect.y + 30.0, opt_rect.w - 24.0, 16.0),
+                    FontKind::Tiny,
+                    theme::TEXT_FAINT,
+                    Align::Left,
+                );
+            }
+        }
+    }
+
     fn draw_tcc(&self, painter: &Painter) {
         let card = self.layout.tcc;
         painter.fill_round_rect(card, 16.0, theme::CARD);
@@ -1231,7 +1602,7 @@ impl App {
         } else if let Some(notice) = &self.notice {
             (notice.clone(), theme::GOOD)
         } else {
-            (format!("ACPI: {interface}  |  HOTKEYS: F6 Cycle Profiles, F7 Stealth Mode  |  {clock}"), theme::TEXT_FAINT)
+            (format!("ACPI: {interface}  |  HOTKEYS: F6 Cycle, F7 Stealth, Alt+F1..F3 Macros  |  {clock}"), theme::TEXT_FAINT)
         };
         painter.text(
             &message,
@@ -1278,13 +1649,52 @@ impl App {
             rect,
             FontKind::Label,
             if enabled {
-                theme::TEXT_DIM
+                if hovered {
+                    theme::TEXT
+                } else {
+                    theme::TEXT_DIM
+                }
             } else {
                 theme::TEXT_FAINT
             },
             Align::Center,
         );
     }
+}
+
+fn status_summary(status: &Status) -> String {
+    let mode_name = format!("{} (0x{:02X})", status.current_profile_name, status.current_profile);
+    let balanced_name = format!("{} (0x{:02X})", status.balanced_profile_name, status.balanced_profile);
+
+    let temps: Vec<String> = status
+        .temps
+        .iter()
+        .map(|temp| {
+            let val = temp
+                .celsius
+                .map(|val| format!("{val}C"))
+                .unwrap_or_else(|| "N/A".into());
+            format!("{} {val}", temp.label)
+        })
+        .collect();
+
+    let fans: Vec<String> = status
+        .fans
+        .iter()
+        .map(|fan| {
+            let val = fan
+                .rpm
+                .map(|val| format!("{val}rpm"))
+                .unwrap_or_else(|| "N/A".into());
+            format!("{} {val}", fan.label)
+        })
+        .collect();
+
+    format!(
+        "profile={mode_name} balanced={balanced_name} temps=[{}] fans=[{}]",
+        temps.join(", "),
+        fans.join(", ")
+    )
 }
 
 fn temp_color(value: u8) -> u32 {
@@ -1296,37 +1706,6 @@ fn temp_color(value: u8) -> u32 {
     } else {
         mix(theme::WARN, theme::BAD, ((value - 80.0) / 20.0).min(1.0))
     }
-}
-
-fn status_summary(status: &Status) -> String {
-    let temps = status
-        .temps
-        .iter()
-        .map(|temp| match temp.celsius {
-            Some(value) => format!("{} {value}C", temp.label),
-            None => format!("{} --C", temp.label),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let fans = status
-        .fans
-        .iter()
-        .map(|fan| {
-            let rpm = fan
-                .rpm
-                .map(|value| format!("{value}rpm"))
-                .unwrap_or_else(|| "--rpm".to_string());
-            format!("{} {rpm}", fan.label)
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "profile=0x{:02X} ({}) balanced=0x{:02X} ({}) temps=[{temps}] fans=[{fans}]",
-        status.current_profile,
-        status.current_profile_name,
-        status.balanced_profile,
-        status.balanced_profile_name
-    )
 }
 
 unsafe fn app_ptr(hwnd: HWND) -> *mut App {
@@ -1416,6 +1795,9 @@ unsafe extern "system" fn wndproc(
                     match id {
                         HOTKEY_F6 => (*app).cycle_profile(),
                         HOTKEY_F7 => (*app).toggle_stealth(),
+                        HOTKEY_M1 => (*app).trigger_m1(),
+                        HOTKEY_M2 => (*app).trigger_m2(),
+                        HOTKEY_M3 => (*app).trigger_m3(),
                         _ => {}
                     }
                 }
@@ -1431,6 +1813,9 @@ unsafe extern "system" fn wndproc(
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_F6);
                 UnregisterHotKey(hwnd, HOTKEY_F7);
+                UnregisterHotKey(hwnd, HOTKEY_M1);
+                UnregisterHotKey(hwnd, HOTKEY_M2);
+                UnregisterHotKey(hwnd, HOTKEY_M3);
                 PostQuitMessage(0);
                 0
             }
@@ -1452,38 +1837,20 @@ unsafe extern "system" fn wndproc(
     }
 }
 
-struct ComGuard;
-
-impl Drop for ComGuard {
-    fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
-        }
-    }
-}
-
 fn run() -> Result<()> {
-    log::info(format_args!("run: creating window"));
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let hr = CoInitializeEx(null(), COINIT_MULTITHREADED as u32);
+        log::info(format_args!("CoInitializeEx(MTA) -> 0x{hr:08X}"));
     }
 
-    let com = unsafe { CoInitializeEx(null(), COINIT_MULTITHREADED as u32) };
-    log::info(format_args!("CoInitializeEx(MTA) -> 0x{com:08X}"));
-    if com < 0 && com != RPC_E_CHANGED_MODE {
-        bail!("CoInitializeEx failed: 0x{com:08X}");
-    }
-    let _com = (com >= 0).then_some(ComGuard);
-
-    let Some(_gdiplus) = GdiPlusGuard::start() else {
-        bail!("GDI+ could not be started");
-    };
-
+    let _guard = GdiPlusGuard::start().context("GDI+ initialization failed")?;
     let instance = unsafe { GetModuleHandleW(null()) };
     let class_name = ui::wide(CLASS_NAME);
     let title = ui::wide(APP_TITLE);
-    let cursor = unsafe { LoadCursorW(null_mut(), IDC_ARROW) };
+
     let icon = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
+    let cursor = unsafe { LoadCursorW(null_mut(), IDC_ARROW) };
 
     let window_class = WNDCLASSW {
         style: CS_HREDRAW | CS_VREDRAW,
@@ -1540,6 +1907,7 @@ fn run() -> Result<()> {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        CoUninitialize();
     }
 
     Ok(())
