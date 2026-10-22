@@ -171,6 +171,8 @@ pub struct Awcc {
     con: WMIConnection,
     path: String,
     pub instance_name: String,
+    pub device: DeviceDescription,
+    pub fan_limits: Vec<(u8, Option<u16>, Option<u16>)>,
 }
 
 fn encoded(op: u8, arg1: u8, arg2: u8) -> u32 {
@@ -236,11 +238,32 @@ impl Awcc {
             instance.instance_name, instance.path
         ));
 
-        Ok(Self {
+        let mut awcc = Self {
             con,
             path: instance.path,
             instance_name: instance.instance_name,
-        })
+            device: DeviceDescription {
+                fan_count: 0,
+                temp_count: 0,
+                profile_count: 0,
+                fan_ids: Vec::new(),
+                temp_ids: Vec::new(),
+                profile_ids: Vec::new(),
+            },
+            fan_limits: Vec::new(),
+        };
+
+        let device = awcc.describe()?;
+        let mut fan_limits = Vec::with_capacity(device.fan_ids.len());
+        for &id in &device.fan_ids {
+            let min = awcc.fan_min_rpm(id).unwrap_or(Some(0));
+            let max = awcc.fan_max_rpm(id).unwrap_or(Some(6000));
+            fan_limits.push((id, min, max));
+        }
+        awcc.device = device;
+        awcc.fan_limits = fan_limits;
+
+        Ok(awcc)
     }
 
     fn call(&self, method: &str, arg: u32) -> Result<u32> {
@@ -435,6 +458,7 @@ impl Awcc {
             .map(|raw| (raw & 0xFFFF) as u16))
     }
 
+    #[allow(dead_code)]
     fn fan_percent(&self, id: u8) -> Result<Option<u8>> {
         Ok(self
             .thermal_info(OP_FAN_PERCENT, id, 0)?
@@ -454,12 +478,11 @@ impl Awcc {
     }
 
     pub fn status(&self) -> Result<Status> {
-        let device = self.describe()?;
         let current_profile = self.current_profile()?;
         let balanced_profile = self.balanced_profile()?;
 
-        let mut temps = Vec::with_capacity(device.temp_ids.len());
-        for &id in &device.temp_ids {
+        let mut temps = Vec::with_capacity(self.device.temp_ids.len());
+        for &id in &self.device.temp_ids {
             temps.push(TempStatus {
                 id,
                 label: sensor_label(id),
@@ -467,20 +490,21 @@ impl Awcc {
             });
         }
 
-        let mut fans = Vec::with_capacity(device.fan_ids.len());
-        for &id in &device.fan_ids {
+        let mut fans = Vec::with_capacity(self.device.fan_ids.len());
+        for &id in &self.device.fan_ids {
+            let limits = self.fan_limits.iter().find(|(fid, _, _)| *fid == id);
             fans.push(FanStatus {
                 id,
                 label: fan_label(id),
                 rpm: self.fan_rpm(id)?,
-                percent: self.fan_percent(id)?,
-                min_rpm: self.fan_min_rpm(id)?,
-                max_rpm: self.fan_max_rpm(id)?,
+                percent: None,
+                min_rpm: limits.and_then(|(_, min, _)| *min),
+                max_rpm: limits.and_then(|(_, _, max)| *max),
             });
         }
 
         Ok(Status {
-            device,
+            device: self.device.clone(),
             current_profile,
             current_profile_name: profile_label(current_profile),
             balanced_profile,
@@ -501,21 +525,20 @@ impl Awcc {
         ));
 
         if id != PROFILE_CUSTOM {
-            let device = self.describe()?;
             log::info(format_args!(
                 "set_profile_id: firmware profiles: {}",
-                device
+                self.device
                     .profile_ids
                     .iter()
                     .map(|id| format!("0x{id:02X}"))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
-            if !device.profile_ids.contains(&id) {
+            if !self.device.profile_ids.contains(&id) {
                 log::error(format_args!("set_profile_id: 0x{id:02X} not offered"));
                 bail!(
                     "profile 0x{id:02X} is not offered by this firmware; supported: {}",
-                    device
+                    self.device
                         .profile_ids
                         .iter()
                         .map(|id| format!("0x{id:02X}"))

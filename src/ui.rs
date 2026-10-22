@@ -60,11 +60,14 @@ pub enum FontKind {
     Tiny,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Align {
     Left,
     Center,
     Right,
+    TopLeft,
+    TopRight,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -96,16 +99,18 @@ struct Fonts {
     left: *mut GpStringFormat,
     center: *mut GpStringFormat,
     right: *mut GpStringFormat,
+    top_left: *mut GpStringFormat,
+    top_right: *mut GpStringFormat,
 }
 
 impl Fonts {
     unsafe fn build(hdc: HDC, scale: f32) -> Option<Self> {
-        let display = create_font(hdc, "Segoe UI Variable Display", 46.0 * scale, true)?;
-        let title = create_font(hdc, "Segoe UI Variable Display", 26.0 * scale, true)?;
+        let display = create_font(hdc, "Segoe UI Variable Display", 42.0 * scale, true)?;
+        let title = create_font(hdc, "Segoe UI Variable Display", 24.0 * scale, true)?;
         let section = create_font(hdc, "Segoe UI", 11.0 * scale, true)?;
         let body = create_font(hdc, "Segoe UI", 13.0 * scale, false)?;
         let label = create_font(hdc, "Segoe UI", 12.0 * scale, true)?;
-        let value = create_font(hdc, "Segoe UI Variable Display", 22.0 * scale, true)?;
+        let value = create_font(hdc, "Segoe UI Variable Display", 20.0 * scale, true)?;
         let tiny = create_font(hdc, "Segoe UI", 10.5 * scale, false)?;
 
         Some(Self {
@@ -116,9 +121,11 @@ impl Fonts {
             label,
             value,
             tiny,
-            left: create_string_format(StringAlignmentNear)?,
-            center: create_string_format(StringAlignmentCenter)?,
-            right: create_string_format(StringAlignmentFar)?,
+            left: create_string_format(StringAlignmentNear, StringAlignmentCenter)?,
+            center: create_string_format(StringAlignmentCenter, StringAlignmentCenter)?,
+            right: create_string_format(StringAlignmentFar, StringAlignmentCenter)?,
+            top_left: create_string_format(StringAlignmentNear, StringAlignmentNear)?,
+            top_right: create_string_format(StringAlignmentFar, StringAlignmentNear)?,
         })
     }
 
@@ -139,6 +146,8 @@ impl Fonts {
             Align::Left => self.left,
             Align::Center => self.center,
             Align::Right => self.right,
+            Align::TopLeft => self.top_left,
+            Align::TopRight => self.top_right,
         }
     }
 }
@@ -172,7 +181,10 @@ unsafe fn create_font(
     }
 }
 
-unsafe fn create_string_format(align: StringAlignment) -> Option<*mut GpStringFormat> {
+unsafe fn create_string_format(
+    align: StringAlignment,
+    line_align: StringAlignment,
+) -> Option<*mut GpStringFormat> {
     let mut format: *mut GpStringFormat = null_mut();
     let status = GdipCreateStringFormat(0, 0, &mut format);
     if status != 0 || format.is_null() {
@@ -180,9 +192,10 @@ unsafe fn create_string_format(align: StringAlignment) -> Option<*mut GpStringFo
     }
     GdipSetStringFormatFlags(
         format,
-        StringFormatFlagsNoWrap | StringFormatFlagsNoClip | StringFormatFlagsNoFitBlackBox | StringFormatFlagsLineLimit,
+        StringFormatFlagsNoWrap | StringFormatFlagsNoClip | StringFormatFlagsNoFitBlackBox,
     );
     GdipSetStringFormatAlign(format, align);
+    GdipSetStringFormatLineAlign(format, line_align);
     Some(format)
 }
 

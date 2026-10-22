@@ -23,8 +23,8 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F1,
-    VK_F2, VK_F3, VK_F6, VK_F7,
+    MOD_ALT, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT,
+    TrackMouseEvent, UnregisterHotKey, VK_F1, VK_F2, VK_F3, VK_F6, VK_F7,
 };
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -33,6 +33,7 @@ const CLASS_NAME: &str = "AwccLiteWindow";
 const APP_TITLE: &str = "Alienware Command Center";
 const TIMER_ID: usize = 1;
 const POLL_MS: u32 = 2000;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 const HOTKEY_F6: i32 = 1001;
 const HOTKEY_F7: i32 = 1002;
@@ -41,7 +42,7 @@ const HOTKEY_M2: i32 = 1012;
 const HOTKEY_M3: i32 = 1013;
 
 const UI_WIDTH: f32 = 700.0;
-const UI_HEIGHT: f32 = 830.0;
+const UI_HEIGHT: f32 = 836.0;
 
 const PAD: f32 = 24.0;
 
@@ -119,26 +120,26 @@ fn build_layout() -> Layout {
     let tab_perf = Rect::new(PAD + 3.0, y_tab + 3.0, tab_w, tab_h);
     let tab_macros = Rect::new(PAD + 3.0 + tab_w, y_tab + 3.0, tab_w, tab_h);
 
-    let y_cpu = 110.0;
+    let y_cpu = 112.0;
     let h_cpu = 176.0;
     let y_fans = y_cpu + h_cpu + 12.0;
-    let h_fans = 114.0;
+    let h_fans = 126.0;
     let y_profile = y_fans + h_fans + 12.0;
-    let h_profile = 214.0;
+    let h_profile = 206.0;
     let y_tcc = y_profile + h_profile + 12.0;
-    let h_tcc = 120.0;
+    let h_tcc = 116.0;
     let y_footer = y_tcc + h_tcc + 14.0;
 
     let inner = card_w - 40.0;
     let tile_w = (inner - 24.0) / 3.0;
-    let tile_h = 64.0;
+    let tile_h = 62.0;
     let mut tiles = [Rect::new(0.0, 0.0, 0.0, 0.0); 6];
     for (index, tile) in tiles.iter_mut().enumerate() {
         let column = index % 3;
         let row = index / 3;
         *tile = Rect::new(
             PAD + 20.0 + column as f32 * (tile_w + 12.0),
-            y_profile + 58.0 + row as f32 * (tile_h + 10.0),
+            y_profile + 52.0 + row as f32 * (tile_h + 10.0),
             tile_w,
             tile_h,
         );
@@ -471,6 +472,13 @@ impl App {
         let hit = self.hit_test(x, y);
         if hit != self.hover {
             self.hover = hit;
+            self.invalidate();
+        }
+    }
+
+    fn on_mouse_leave(&mut self) {
+        if self.hover != Hit::None {
+            self.hover = Hit::None;
             self.invalidate();
         }
     }
@@ -986,7 +994,7 @@ impl App {
         painter.fill_circle((pill.x + 18.0, pill.y + 16.0), 4.0, color);
         painter.text(
             label,
-            Rect::new(pill.x + 28.0, pill.y + 8.0, pill.w - 36.0, 18.0),
+            Rect::new(pill.x + 28.0, pill.y, pill.w - 36.0, pill.h),
             FontKind::Label,
             theme::TEXT,
             Align::Left,
@@ -1170,12 +1178,12 @@ impl App {
         );
 
         let sub_w = (card.w - 40.0 - 16.0) / 2.0;
-        let sub_h = 68.0;
+        let sub_h = 76.0;
         let entries = [("CPU FAN", FAN_CPU), ("GPU FAN", FAN_GPU)];
 
         for (index, (label, id)) in entries.iter().enumerate() {
             let x = card.x + 20.0 + index as f32 * (sub_w + 16.0);
-            let y = card.y + 34.0;
+            let y = card.y + 36.0;
             let sub_rect = Rect::new(x, y, sub_w, sub_h);
 
             painter.fill_round_rect(sub_rect, 10.0, theme::BG);
@@ -1187,7 +1195,7 @@ impl App {
 
             painter.text(
                 label,
-                Rect::new(x + 14.0, y + 8.0, 90.0, 18.0),
+                Rect::new(x + 14.0, y + 10.0, 90.0, 18.0),
                 FontKind::Label,
                 theme::TEXT,
                 Align::Left,
@@ -1195,41 +1203,41 @@ impl App {
 
             match rpm {
                 Some(0) => {
-                    painter.fill_circle((x + sub_w - 110.0, y + 17.0), 3.0, theme::GOOD);
+                    painter.fill_circle((x + sub_w - 115.0, y + 19.0), 3.0, theme::GOOD);
                     painter.text(
                         "PASSIVE 0 dB",
-                        Rect::new(x + sub_w - 102.0, y + 9.0, 88.0, 16.0),
+                        Rect::new(x + sub_w - 110.0, y + 10.0, 96.0, 18.0),
                         FontKind::Tiny,
                         theme::GOOD,
                         Align::Right,
                     );
                     painter.text(
                         "0 RPM",
-                        Rect::new(x + 14.0, y + 26.0, 80.0, 24.0),
+                        Rect::new(x + 14.0, y + 30.0, 90.0, 22.0),
                         FontKind::Value,
                         theme::TEXT_DIM,
                         Align::Left,
                     );
                     painter.text(
-                        "Passive (Quiet mode <60°C)",
-                        Rect::new(x + 80.0, y + 30.0, sub_w - 94.0, 16.0),
+                        "Passive (<60°C)",
+                        Rect::new(x + 105.0, y + 32.0, sub_w - 119.0, 18.0),
                         FontKind::Tiny,
                         theme::TEXT_FAINT,
                         Align::Right,
                     );
                 }
                 Some(v) => {
-                    painter.fill_circle((x + sub_w - 94.0, y + 17.0), 3.0, theme::ACCENT);
+                    painter.fill_circle((x + sub_w - 96.0, y + 19.0), 3.0, theme::ACCENT);
                     painter.text(
                         "COOLING",
-                        Rect::new(x + sub_w - 86.0, y + 9.0, 72.0, 16.0),
+                        Rect::new(x + sub_w - 90.0, y + 10.0, 76.0, 18.0),
                         FontKind::Tiny,
                         theme::ACCENT,
                         Align::Right,
                     );
                     painter.text(
                         &format!("{v} RPM"),
-                        Rect::new(x + 14.0, y + 26.0, 110.0, 24.0),
+                        Rect::new(x + 14.0, y + 30.0, 110.0, 22.0),
                         FontKind::Value,
                         theme::ACCENT,
                         Align::Left,
@@ -1240,8 +1248,8 @@ impl App {
                         0
                     };
                     painter.text(
-                        &format!("{pct}%  ·  Max {max_rpm} RPM"),
-                        Rect::new(x + 110.0, y + 30.0, sub_w - 124.0, 16.0),
+                        &format!("{pct}% · Max {max_rpm} RPM"),
+                        Rect::new(x + 120.0, y + 32.0, sub_w - 134.0, 18.0),
                         FontKind::Tiny,
                         theme::TEXT_FAINT,
                         Align::Right,
@@ -1250,14 +1258,14 @@ impl App {
                 None => {
                     painter.text(
                         "OFFLINE",
-                        Rect::new(x + sub_w - 86.0, y + 9.0, 72.0, 16.0),
+                        Rect::new(x + sub_w - 90.0, y + 10.0, 76.0, 18.0),
                         FontKind::Tiny,
                         theme::TEXT_FAINT,
                         Align::Right,
                     );
                     painter.text(
                         "-- RPM",
-                        Rect::new(x + 14.0, y + 26.0, 100.0, 24.0),
+                        Rect::new(x + 14.0, y + 30.0, 100.0, 22.0),
                         FontKind::Value,
                         theme::TEXT_FAINT,
                         Align::Left,
@@ -1265,13 +1273,13 @@ impl App {
                 }
             }
 
-            let bar = Rect::new(x + 14.0, y + 53.0, sub_w - 28.0, 5.0);
-            painter.fill_round_rect(bar, 2.5, theme::TRACK);
+            let bar = Rect::new(x + 14.0, y + 56.0, sub_w - 28.0, 6.0);
+            painter.fill_round_rect(bar, 3.0, theme::TRACK);
             if let Some(v) = rpm.filter(|&v| v > 0 && max_rpm > 0) {
                 let fill_w = (bar.w * (v as f32 / max_rpm as f32).clamp(0.0, 1.0)).max(4.0);
                 painter.fill_round_rect(
                     Rect::new(bar.x, bar.y, fill_w, bar.h),
-                    2.5,
+                    3.0,
                     theme::ACCENT,
                 );
             }
@@ -1350,7 +1358,7 @@ impl App {
             let tag_color = if active { theme::ACCENT } else { theme::TEXT_FAINT };
             painter.text(
                 tag,
-                Rect::new(tile.x + tile.w - 68.0, tile.y + 12.0, 56.0, 16.0),
+                Rect::new(tile.x + tile.w - 76.0, tile.y + 12.0, 64.0, 16.0),
                 FontKind::Tiny,
                 tag_color,
                 Align::Right,
@@ -1358,7 +1366,7 @@ impl App {
 
             painter.text(
                 profile.label,
-                Rect::new(tile.x + 14.0, tile.y + 12.0, tile.w - 74.0, 20.0),
+                Rect::new(tile.x + 14.0, tile.y + 12.0, tile.w - 92.0, 20.0),
                 FontKind::Label,
                 name_color,
                 Align::Left,
@@ -1796,9 +1804,23 @@ unsafe extern "system" fn wndproc(
             WM_MOUSEMOVE => {
                 let app = app_ptr(hwnd);
                 if !app.is_null() {
+                    let mut tme = TRACKMOUSEEVENT {
+                        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    TrackMouseEvent(&mut tme);
                     let x = (lparam & 0xFFFF) as f32 / (*app).scale;
                     let y = ((lparam >> 16) & 0xFFFF) as f32 / (*app).scale;
                     (*app).on_mouse_move(x, y);
+                }
+                0
+            }
+            WM_MOUSELEAVE => {
+                let app = app_ptr(hwnd);
+                if !app.is_null() {
+                    (*app).on_mouse_leave();
                 }
                 0
             }
