@@ -112,10 +112,12 @@ fn build_layout() -> Layout {
     let half = (card_w - 16.0) / 2.0;
 
     let y_tab = 66.0;
-    let tab_w = 210.0;
-    let tab_h = 32.0;
-    let tab_perf = Rect::new(PAD, y_tab, tab_w, tab_h);
-    let tab_macros = Rect::new(PAD + tab_w + 10.0, y_tab, tab_w, tab_h);
+    let tab_bar_w = 440.0;
+    let tab_bar_h = 36.0;
+    let tab_w = (tab_bar_w - 6.0) / 2.0;
+    let tab_h = tab_bar_h - 6.0;
+    let tab_perf = Rect::new(PAD + 3.0, y_tab + 3.0, tab_w, tab_h);
+    let tab_macros = Rect::new(PAD + 3.0 + tab_w, y_tab + 3.0, tab_w, tab_h);
 
     let y_cpu = 110.0;
     let h_cpu = 176.0;
@@ -1000,14 +1002,19 @@ impl App {
 
         let perf_box = self.layout.tab_perf;
         let macro_box = self.layout.tab_macros;
+        let bar = Rect::new(
+            perf_box.x - 3.0,
+            perf_box.y - 3.0,
+            perf_box.w + macro_box.w + 6.0,
+            perf_box.h + 6.0,
+        );
 
-        let bar = Rect::new(perf_box.x - 4.0, perf_box.y - 4.0, perf_box.w + macro_box.w + 18.0, perf_box.h + 8.0);
-        painter.fill_round_rect(bar, 10.0, theme::TAB_BG);
-        painter.stroke_round_rect(bar, 10.0, theme::BORDER, 1.0);
+        painter.fill_round_rect(bar, 8.0, theme::TAB_BG);
+        painter.stroke_round_rect(bar, 8.0, theme::BORDER, 1.0);
 
-        painter.fill_round_rect(perf_box, 8.0, if is_perf { theme::TAB_ACTIVE } else { theme::TAB_BG });
         if is_perf {
-            painter.stroke_glow_round_rect(perf_box, 8.0, theme::ACCENT, theme::ACCENT_GLOW);
+            painter.fill_round_rect(perf_box, 6.0, theme::TAB_ACTIVE);
+            painter.stroke_round_rect(perf_box, 6.0, theme::BORDER_HOVER, 1.0);
         }
         painter.text(
             "THERMALS & FANS",
@@ -1017,9 +1024,9 @@ impl App {
             Align::Center,
         );
 
-        painter.fill_round_rect(macro_box, 8.0, if is_macro { theme::TAB_ACTIVE } else { theme::TAB_BG });
         if is_macro {
-            painter.stroke_glow_round_rect(macro_box, 8.0, theme::ACCENT, theme::ACCENT_GLOW);
+            painter.fill_round_rect(macro_box, 6.0, theme::TAB_ACTIVE);
+            painter.stroke_round_rect(macro_box, 6.0, theme::BORDER_HOVER, 1.0);
         }
         painter.text(
             "MACRO KEYS (M1, M2, M3)",
@@ -1075,7 +1082,7 @@ impl App {
         );
         painter.text(
             sensor,
-            Rect::new(card.x + card.w - 82.0, card.y + 18.0, 60.0, 18.0),
+            Rect::new(card.x + card.w - 130.0, card.y + 18.0, 110.0, 18.0),
             FontKind::Tiny,
             theme::TEXT_FAINT,
             Align::Right,
@@ -1162,81 +1169,112 @@ impl App {
             Align::Left,
         );
 
-        let column_w = (card.w - 40.0 - 24.0) / 2.0;
+        let sub_w = (card.w - 40.0 - 16.0) / 2.0;
+        let sub_h = 68.0;
         let entries = [("CPU FAN", FAN_CPU), ("GPU FAN", FAN_GPU)];
+
         for (index, (label, id)) in entries.iter().enumerate() {
-            let x = card.x + 20.0 + index as f32 * (column_w + 24.0);
+            let x = card.x + 20.0 + index as f32 * (sub_w + 16.0);
+            let y = card.y + 34.0;
+            let sub_rect = Rect::new(x, y, sub_w, sub_h);
+
+            painter.fill_round_rect(sub_rect, 10.0, theme::BG);
+            painter.stroke_round_rect(sub_rect, 10.0, theme::BORDER, 1.0);
+
             let fan = self.fan_of(*id);
+            let rpm = fan.and_then(|fan| fan.rpm);
+            let max_rpm = fan.and_then(|fan| fan.max_rpm).unwrap_or(6000);
+
             painter.text(
                 label,
-                Rect::new(x, card.y + 36.0, 120.0, 18.0),
+                Rect::new(x + 14.0, y + 8.0, 90.0, 18.0),
                 FontKind::Label,
                 theme::TEXT,
                 Align::Left,
             );
-            let rpm = fan.and_then(|fan| fan.rpm);
-            let value = match rpm {
-                Some(value) => value.to_string(),
-                None => "--".to_string(),
-            };
-            painter.text(
-                &value,
-                Rect::new(x, card.y + 54.0, 160.0, 30.0),
-                FontKind::Value,
-                theme::TEXT,
-                Align::Left,
-            );
-            let (text_width, _) = painter.measure(&value, FontKind::Value);
-            painter.text(
-                "rpm",
-                Rect::new(x + text_width + 8.0, card.y + 64.0, 60.0, 18.0),
-                FontKind::Tiny,
-                theme::TEXT_FAINT,
-                Align::Left,
-            );
 
-            // Silent 0 dB status or active status
-            if rpm == Some(0) {
-                painter.text(
-                    "Silent 0 dB (Passive)",
-                    Rect::new(x + 80.0, card.y + 36.0, column_w - 80.0, 18.0),
-                    FontKind::Tiny,
-                    theme::GOOD,
-                    Align::Right,
-                );
-            } else if let Some(_v) = rpm.filter(|&v| v > 0) {
-                painter.text(
-                    "Active Cooling",
-                    Rect::new(x + 80.0, card.y + 36.0, column_w - 80.0, 18.0),
-                    FontKind::Tiny,
-                    theme::ACCENT,
-                    Align::Right,
-                );
+            match rpm {
+                Some(0) => {
+                    painter.fill_circle((x + sub_w - 110.0, y + 17.0), 3.0, theme::GOOD);
+                    painter.text(
+                        "PASSIVE 0 dB",
+                        Rect::new(x + sub_w - 102.0, y + 9.0, 88.0, 16.0),
+                        FontKind::Tiny,
+                        theme::GOOD,
+                        Align::Right,
+                    );
+                    painter.text(
+                        "0 RPM",
+                        Rect::new(x + 14.0, y + 26.0, 80.0, 24.0),
+                        FontKind::Value,
+                        theme::TEXT_DIM,
+                        Align::Left,
+                    );
+                    painter.text(
+                        "Passive (Quiet mode <60°C)",
+                        Rect::new(x + 80.0, y + 30.0, sub_w - 94.0, 16.0),
+                        FontKind::Tiny,
+                        theme::TEXT_FAINT,
+                        Align::Right,
+                    );
+                }
+                Some(v) => {
+                    painter.fill_circle((x + sub_w - 94.0, y + 17.0), 3.0, theme::ACCENT);
+                    painter.text(
+                        "COOLING",
+                        Rect::new(x + sub_w - 86.0, y + 9.0, 72.0, 16.0),
+                        FontKind::Tiny,
+                        theme::ACCENT,
+                        Align::Right,
+                    );
+                    painter.text(
+                        &format!("{v} RPM"),
+                        Rect::new(x + 14.0, y + 26.0, 110.0, 24.0),
+                        FontKind::Value,
+                        theme::ACCENT,
+                        Align::Left,
+                    );
+                    let pct = if max_rpm > 0 {
+                        ((v as f32 / max_rpm as f32) * 100.0).round() as u32
+                    } else {
+                        0
+                    };
+                    painter.text(
+                        &format!("{pct}%  ·  Max {max_rpm} RPM"),
+                        Rect::new(x + 110.0, y + 30.0, sub_w - 124.0, 16.0),
+                        FontKind::Tiny,
+                        theme::TEXT_FAINT,
+                        Align::Right,
+                    );
+                }
+                None => {
+                    painter.text(
+                        "OFFLINE",
+                        Rect::new(x + sub_w - 86.0, y + 9.0, 72.0, 16.0),
+                        FontKind::Tiny,
+                        theme::TEXT_FAINT,
+                        Align::Right,
+                    );
+                    painter.text(
+                        "-- RPM",
+                        Rect::new(x + 14.0, y + 26.0, 100.0, 24.0),
+                        FontKind::Value,
+                        theme::TEXT_FAINT,
+                        Align::Left,
+                    );
+                }
             }
 
-            let max = fan.and_then(|fan| fan.max_rpm).unwrap_or(0);
-            let bar = Rect::new(x, card.y + 88.0, column_w - 40.0, 6.0);
-            painter.fill_round_rect(bar, 3.0, theme::TRACK);
-            if let (Some(value), true) = (rpm, max > 0) {
-                let width = bar.w * (value as f32 / max as f32).clamp(0.0, 1.0);
+            let bar = Rect::new(x + 14.0, y + 53.0, sub_w - 28.0, 5.0);
+            painter.fill_round_rect(bar, 2.5, theme::TRACK);
+            if let Some(v) = rpm.filter(|&v| v > 0 && max_rpm > 0) {
+                let fill_w = (bar.w * (v as f32 / max_rpm as f32).clamp(0.0, 1.0)).max(4.0);
                 painter.fill_round_rect(
-                    Rect::new(bar.x, bar.y, width.max(4.0), bar.h),
-                    3.0,
+                    Rect::new(bar.x, bar.y, fill_w, bar.h),
+                    2.5,
                     theme::ACCENT,
                 );
             }
-            let range = match (fan.and_then(|fan| fan.min_rpm), fan.and_then(|fan| fan.max_rpm))
-            {
-                (Some(min), Some(max)) => format!("{min} - {max} rpm"),
-                _ => String::new(),
-            };
-            painter.text(
-                &range,
-                Rect::new(x, card.y + 98.0, column_w, 16.0),
-                FontKind::Tiny,
-                theme::TEXT_FAINT,
-                Align::Left,
-            );
         }
     }
 
@@ -1312,7 +1350,7 @@ impl App {
             let tag_color = if active { theme::ACCENT } else { theme::TEXT_FAINT };
             painter.text(
                 tag,
-                Rect::new(tile.x + tile.w - 110.0, tile.y + 12.0, 96.0, 16.0),
+                Rect::new(tile.x + tile.w - 68.0, tile.y + 12.0, 56.0, 16.0),
                 FontKind::Tiny,
                 tag_color,
                 Align::Right,
@@ -1320,21 +1358,18 @@ impl App {
 
             painter.text(
                 profile.label,
-                Rect::new(tile.x + 16.0, tile.y + 12.0, tile.w - 120.0, 20.0),
+                Rect::new(tile.x + 14.0, tile.y + 12.0, tile.w - 74.0, 20.0),
                 FontKind::Label,
                 name_color,
                 Align::Left,
             );
             painter.text(
                 MODE_HINTS[index],
-                Rect::new(tile.x + 16.0, tile.y + 34.0, tile.w - 32.0, 18.0),
+                Rect::new(tile.x + 14.0, tile.y + 34.0, tile.w - 28.0, 18.0),
                 FontKind::Tiny,
                 hint_color,
                 Align::Left,
             );
-            if active {
-                painter.fill_circle((tile.x + tile.w - 14.0, tile.y + tile.h - 14.0), 3.5, theme::ACCENT);
-            }
         }
 
         let switch = self.layout.stealth;
@@ -1490,9 +1525,15 @@ impl App {
         let pending = self.tcc_value();
 
         if self.tcc.is_some() {
+            let limit = self
+                .tcc
+                .as_ref()
+                .and_then(|tcc| tcc.max_temperature)
+                .unwrap_or(100);
+            let throttle_target = limit - pending;
             painter.text(
-                &format!("+{pending} C"),
-                Rect::new(card.x + card.w - 220.0, card.y + 12.0, 200.0, 30.0),
+                &format!("{throttle_target}°C (-{pending}°C)"),
+                Rect::new(card.x + card.w - 240.0, card.y + 12.0, 220.0, 30.0),
                 FontKind::Value,
                 if pending == current {
                     theme::TEXT
@@ -1501,16 +1542,11 @@ impl App {
                 },
                 Align::Right,
             );
-            let limit = self
-                .tcc
-                .as_ref()
-                .and_then(|tcc| tcc.max_temperature)
-                .unwrap_or(0);
             painter.text(
-                &format!("CPU limit {limit} C  -  device {current} C"),
-                Rect::new(card.x + 20.0, card.y + 38.0, 300.0, 18.0),
+                &format!("TJMax: {limit}°C  ·  Thermal Throttle Cap: {throttle_target}°C"),
+                Rect::new(card.x + 20.0, card.y + 38.0, 420.0, 18.0),
                 FontKind::Tiny,
-                theme::TEXT_FAINT,
+                theme::TEXT_DIM,
                 Align::Left,
             );
         } else {
@@ -1602,7 +1638,10 @@ impl App {
         } else if let Some(notice) = &self.notice {
             (notice.clone(), theme::GOOD)
         } else {
-            (format!("ACPI: {interface}  |  HOTKEYS: F6 Cycle, F7 Stealth, Alt+F1..F3 Macros  |  {clock}"), theme::TEXT_FAINT)
+            (
+                format!("ACPI: {interface}  ·  F6: Cycle  ·  F7: Stealth  ·  {clock}"),
+                theme::TEXT_FAINT,
+            )
         };
         painter.text(
             &message,

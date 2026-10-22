@@ -349,6 +349,7 @@ impl Painter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn measure(&self, text: &str, kind: FontKind) -> (f32, f32) {
         let wide = wide(text);
         let mut bounds: RectF = RectF {
