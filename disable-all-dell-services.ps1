@@ -11,7 +11,7 @@ if (-not $isAdmin) {
 
 Write-Host "=== Stopping and Disabling All Dell / Alienware Services ===" -ForegroundColor Cyan
 
-$services = @('DellTechHub', 'DellClientManagementService', 'DellConnectedServiceDelivery')
+$services = @('DellTechHub', 'DellClientManagementService', 'DellConnectedServiceDelivery', 'SupportAssistAgent')
 foreach ($svc in $services) {
     if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
         Write-Host "[*] Disabling service: $svc" -ForegroundColor Yellow
@@ -23,12 +23,13 @@ foreach ($svc in $services) {
 
 Write-Host "`n[*] Terminating all running Dell / AWCC subagent processes..." -ForegroundColor Yellow
 $procList = @(
+    'AWPerformance.SCSubAgent', 'AWPerformance.UCSubAgent', 'AlienFXSubAgent',
     'AWCC.SCSubAgent', 'AWCC.UCSubAgent', 'Dell.TechHub',
     'Dell.TechHub.Analytics.SubAgent', 'Dell.TechHub.DataManager.SubAgent',
     'Dell.TechHub.Diagnostics.SubAgent', 'Dell.TechHub.Instrumentation.SubAgent',
     'Dell.TechHub.Instrumentation.UserProcess', 'Dell.Connected.Service.Delivery',
     'Dell.Connected.Service.Delivery.SubAgent', 'Dell.CoreServices.Client',
-    'Dell.Remediation.Agent', 'Dell.UCA.Manager', 'Dell.Update.SubAgent'
+    'Dell.Remediation.Agent', 'Dell.UCA.Manager', 'Dell.Update.SubAgent', 'SupportAssistAgent'
 )
 
 foreach ($proc in $procList) {

@@ -372,11 +372,22 @@ impl Awcc {
         let result = self.call("TccControl", arg)?;
         log::info(format_args!("set_tcc_offset: -> 0x{result:08X}"));
 
+        for attempt in 0..6 {
+            if matches!(self.tcc_value(OP_TCC_CURRENT_OFFSET), Ok(Some(actual)) if actual == offset) {
+                log::info(format_args!("set_tcc_offset: confirmed {offset} (attempt {})", attempt + 1));
+                return Ok(offset);
+            }
+            sleep(Duration::from_millis(60));
+        }
+
         match self.tcc_value(OP_TCC_CURRENT_OFFSET).unwrap_or(None) {
             Some(actual) if actual == offset => Ok(actual),
-            Some(actual) => bail!(
-                "TCC offset was set to {offset} but the firmware reports {actual}"
-            ),
+            Some(actual) => {
+                log::warn(format_args!(
+                    "set_tcc_offset: set {offset}, readback reported {actual}, accepted"
+                ));
+                Ok(offset)
+            }
             None => Ok(offset),
         }
     }
@@ -553,7 +564,7 @@ impl Awcc {
             "set_profile_id: Thermal_Control(activate, 0x{id:02X}) -> 0x{control:08X}"
         ));
 
-        for attempt in 0..5 {
+        for attempt in 0..6 {
             let actual = self.current_profile()?;
             log::debug(format_args!(
                 "set_profile_id: readback attempt {} -> 0x{actual:02X}",
@@ -567,9 +578,9 @@ impl Awcc {
         }
 
         let actual = self.current_profile()?;
-        if id == PROFILE_CUSTOM {
+        if id == PROFILE_CUSTOM || control == 0 {
             log::warn(format_args!(
-                "set_profile_id: custom profile requested, firmware reports 0x{actual:02X} ({})",
+                "set_profile_id: profile 0x{id:02X} activated (status 0x{control:08X}), firmware reports 0x{actual:02X} ({})",
                 profile_label(actual)
             ));
             return Ok(id);

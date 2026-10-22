@@ -211,6 +211,7 @@ struct App {
     tcc: Option<TccStatus>,
     tcc_failed: bool,
     tcc_pending: i32,
+    tcc_has_pending: bool,
     loads: Loads,
     sampler: LoadSampler,
     error: Option<String>,
@@ -245,6 +246,7 @@ impl App {
             tcc: None,
             tcc_failed: false,
             tcc_pending: 0,
+            tcc_has_pending: false,
             loads: Loads::default(),
             sampler: LoadSampler::new(),
             error: None,
@@ -391,6 +393,9 @@ impl App {
                     self.tcc_failed = true;
                     self.tcc = None;
                 } else {
+                    if !self.tcc_has_pending {
+                        self.tcc_pending = status.offset.unwrap_or(0);
+                    }
                     self.tcc = Some(status);
                 }
             }
@@ -415,7 +420,7 @@ impl App {
     }
 
     fn tcc_value(&self) -> i32 {
-        if self.dragging {
+        if self.dragging || self.tcc_has_pending {
             self.tcc_pending
         } else {
             self.tcc_current()
@@ -496,6 +501,7 @@ impl App {
             let ratio = ((x - track.x) / track.w).clamp(0.0, 1.0);
             let max = self.tcc_max();
             self.tcc_pending = (ratio * max as f32).round() as i32;
+            self.tcc_has_pending = true;
             self.invalidate();
             return;
         }
@@ -527,6 +533,7 @@ impl App {
             let ratio = ((x - track.x) / track.w).clamp(0.0, 1.0);
             let max = self.tcc_max();
             self.tcc_pending = (ratio * max as f32).round() as i32;
+            self.tcc_has_pending = true;
             self.invalidate();
             return;
         }
@@ -614,14 +621,25 @@ impl App {
             "profile selected: {} (0x{:02X})",
             profile.label, profile.id
         ));
-        if self.stealth_on {
-            self.notice = None;
-            self.error = Some("Stealth is on. Turn it off before changing the profile.".into());
+        if !self.can_write() {
+            self.error = Some("Administrator access is required to change the profile.".into());
             self.invalidate();
             return;
         }
-        if !self.can_write() {
-            self.error = Some("Administrator access is required to change the profile.".into());
+        if self.stealth_on {
+            self.stealth_on = false;
+        }
+        let supported = self
+            .status
+            .as_ref()
+            .map(|s| s.device.profile_ids.clone())
+            .unwrap_or_default();
+        if profile.id == PROFILE_CUSTOM || (!supported.is_empty() && !supported.contains(&profile.id)) {
+            self.notice = None;
+            self.error = Some(format!(
+                "{} mode is not supported by Alienware 16 Aurora firmware.",
+                profile.label
+            ));
             self.invalidate();
             return;
         }
@@ -632,8 +650,12 @@ impl App {
                 if profile.id != PROFILE_QUIET {
                     self.stealth_previous = profile.id;
                 }
+                if let Some(status) = self.status.as_mut() {
+                    status.current_profile = id;
+                }
                 self.error = None;
                 self.notice = Some(format!("{} profile applied", profile.label));
+                self.invalidate();
                 self.refresh();
             }
             Some(Err(error)) => {
@@ -860,8 +882,9 @@ impl App {
         match result {
             Some(Ok(value)) => {
                 log::info(format_args!("tcc offset applied: {value}"));
+                self.tcc_has_pending = false;
                 self.error = None;
-                self.notice = Some(format!("CPU thermal limit offset set to {value} C"));
+                self.notice = Some(format!("CPU thermal limit offset set to {value}\u{00B0}C"));
                 self.refresh();
             }
             Some(Err(error)) => {
@@ -1675,7 +1698,7 @@ impl App {
         }
 
         let apply = self.layout.tcc_apply;
-        let changed = pending != current && max > 0;
+        let changed = (self.tcc_has_pending && pending != current) && max > 0;
         let enabled = self.can_write() && max > 0 && changed;
         let hovered = self.hover == Hit::TccApply || self.pressed == Hit::TccApply;
         painter.fill_round_rect(
@@ -2062,6 +2085,59 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+fn terminate_awcc_conflicts() {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            return;
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+
+                let should_kill = name.starts_with("awperformance.")
+                    || name.starts_with("awcc.scsubagent")
+                    || name.starts_with("awcc.ucsubagent")
+                    || name.starts_with("alienfxsubagent")
+                    || name == "dell.techhub.exe";
+
+                if should_kill {
+                    let handle = OpenProcess(PROCESS_TERMINATE, 0, entry.th32ProcessID);
+                    if !handle.is_null() {
+                        TerminateProcess(handle, 1);
+                        CloseHandle(handle);
+                        log::info(format_args!(
+                            "terminated conflicting background process: {name} (PID {})",
+                            entry.th32ProcessID
+                        ));
+                    }
+                }
+
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+    }
+}
+
 fn relaunch_elevated() -> Result<()> {
     let mut path = [0u16; 1024];
     let length = unsafe { GetModuleFileNameW(null_mut(), path.as_mut_ptr(), path.len() as u32) };
@@ -2111,6 +2187,10 @@ fn main() {
                 log::warn(format_args!("elevation unavailable: {error:#}"));
             }
         }
+    }
+
+    if admin {
+        terminate_awcc_conflicts();
     }
 
     if let Err(error) = run() {
