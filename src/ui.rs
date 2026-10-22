@@ -27,23 +27,25 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
 pub mod theme {
     use super::argb;
 
-    pub const BG: u32 = argb(255, 11, 14, 19);
-    pub const CARD: u32 = argb(255, 20, 25, 33);
-    pub const CARD_HOVER: u32 = argb(255, 27, 33, 44);
-    pub const CARD_ACTIVE: u32 = argb(255, 25, 40, 54);
-    pub const BORDER: u32 = argb(255, 38, 46, 60);
-    pub const BORDER_HOVER: u32 = argb(255, 60, 72, 90);
-    pub const TEXT: u32 = argb(255, 236, 240, 247);
-    pub const TEXT_DIM: u32 = argb(255, 158, 169, 186);
-    pub const TEXT_FAINT: u32 = argb(255, 110, 122, 140);
-    pub const ACCENT: u32 = argb(255, 56, 189, 248);
-    pub const ACCENT_DIM: u32 = argb(255, 29, 122, 165);
-    pub const GOOD: u32 = argb(255, 52, 211, 153);
-    pub const WARN: u32 = argb(255, 251, 191, 36);
-    pub const BAD: u32 = argb(255, 248, 113, 113);
-    pub const TRACK: u32 = argb(255, 34, 41, 53);
+    pub const BG: u32 = argb(255, 10, 13, 20);           // Alienware Deep Charcoal
+    pub const CARD: u32 = argb(255, 17, 22, 33);         // Alienware Gunmetal Card
+    pub const CARD_HOVER: u32 = argb(255, 23, 31, 46);   // Card hover
+    pub const CARD_ACTIVE: u32 = argb(255, 15, 34, 52);  // Card active
+    pub const BORDER: u32 = argb(255, 28, 38, 56);       // Crisp border
+    pub const BORDER_HOVER: u32 = argb(255, 45, 68, 98); // Border hover
+    pub const TEXT: u32 = argb(255, 245, 248, 252);      // Crisp pure white
+    pub const TEXT_DIM: u32 = argb(255, 150, 168, 192);  // Muted secondary text
+    pub const TEXT_FAINT: u32 = argb(255, 96, 114, 138); // Faint hints
+    pub const ACCENT: u32 = argb(255, 0, 229, 255);      // Alienware Electric Cyan (#00E5FF)
+    pub const ACCENT_DIM: u32 = argb(255, 0, 140, 175);  // Deep cyan
+    pub const ACCENT_GLOW: u32 = argb(75, 0, 229, 255);  // Neon Cyan Glow
+    pub const GOOD: u32 = argb(255, 0, 230, 118);        // Eco Green (#00E676)
+    pub const WARN: u32 = argb(255, 255, 171, 0);        // Performance Amber (#FFAB00)
+    pub const BAD: u32 = argb(255, 255, 82, 82);         // Overdrive Hot Red (#FF5252)
+    pub const TRACK: u32 = argb(255, 27, 35, 50);        // Slider track
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FontKind {
     Display,
@@ -78,7 +80,6 @@ impl Rect {
     pub fn contains(&self, px: f32, py: f32) -> bool {
         px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
     }
-
 }
 
 struct Fonts {
@@ -167,6 +168,7 @@ unsafe fn create_font(
         Some(font)
     }
 }
+
 unsafe fn create_string_format(align: StringAlignment) -> Option<*mut GpStringFormat> {
     let mut format: *mut GpStringFormat = null_mut();
     let status = GdipCreateStringFormat(0, 0, &mut format);
@@ -273,6 +275,16 @@ impl Painter {
         }
     }
 
+    pub fn stroke_glow_round_rect(&self, rect: Rect, radius: f32, color: u32, glow: u32) {
+        self.stroke_round_rect(
+            Rect::new(rect.x - 1.0, rect.y - 1.0, rect.w + 2.0, rect.h + 2.0),
+            radius + 1.0,
+            glow,
+            2.0,
+        );
+        self.stroke_round_rect(rect, radius, color, 1.5);
+    }
+
     pub fn fill_circle(&self, center: (f32, f32), radius: f32, color: u32) {
         let brush = self.brush(color);
         unsafe {
@@ -287,8 +299,6 @@ impl Painter {
             GdipDeleteBrush(brush);
         }
     }
-
-
 
     pub fn arc(&self, rect: Rect, start: f32, sweep: f32, color: u32, width: f32) {
         let pen = self.pen(color, width);
@@ -451,47 +461,29 @@ mod probe {
             let dc = CreateCompatibleDC(screen);
             let bitmap = CreateCompatibleBitmap(screen, 400, 300);
             let old = SelectObject(dc, bitmap);
-            println!("dc ok");
 
             let mut path: *mut GpPath = null_mut();
-            let status = GdipCreatePath2(std::ptr::null(), std::ptr::null(), 0, FillModeWinding, &mut path);
-            println!(
-                "GdipCreatePath2(winding): status={status} path={path:?} alt={} wind={}",
-                FillModeAlternate, FillModeWinding
-            );
+            let _ = GdipCreatePath2(std::ptr::null(), std::ptr::null(), 0, FillModeWinding, &mut path);
             if !path.is_null() {
-                let status = GdipAddPathArc(path, 10.0, 10.0, 24.0, 24.0, 180.0, 90.0);
-                println!("GdipAddPathArc: status={status}");
-                let status = GdipAddPathLine(path, 22.0, 10.0, 178.0, 10.0);
-                println!("GdipAddPathLine: status={status}");
+                let _ = GdipAddPathArc(path, 10.0, 10.0, 24.0, 24.0, 180.0, 90.0);
+                let _ = GdipAddPathLine(path, 22.0, 10.0, 178.0, 10.0);
+                GdipDeletePath(path);
             }
 
             let Some(painter) = Painter::new(dc, 1.0) else {
-                println!("painter creation FAILED");
                 return;
             };
-            println!("painter ok");
 
             painter.fill_rect(Rect::new(0.0, 0.0, 400.0, 300.0), theme::BG);
-            println!("fill_rect ok");
-
             painter.fill_round_rect(Rect::new(10.0, 10.0, 200.0, 80.0), 12.0, theme::CARD);
-            println!("fill_round_rect ok");
-
-            painter.stroke_round_rect(
+            painter.stroke_glow_round_rect(
                 Rect::new(10.0, 10.0, 200.0, 80.0),
                 12.0,
-                theme::BORDER,
-                1.0,
+                theme::ACCENT,
+                theme::ACCENT_GLOW,
             );
-            println!("stroke_round_rect ok");
-
             painter.arc(Rect::new(20.0, 20.0, 100.0, 100.0), 135.0, 270.0, theme::ACCENT, 10.0);
-            println!("arc ok");
-
             painter.fill_circle((100.0, 100.0), 20.0, theme::ACCENT);
-            println!("fill_circle ok");
-
             painter.text(
                 "Hello 61 C",
                 Rect::new(10.0, 110.0, 300.0, 40.0),
@@ -499,16 +491,6 @@ mod probe {
                 theme::TEXT,
                 Align::Left,
             );
-            println!("text ok");
-
-            painter.text(
-                "centered",
-                Rect::new(10.0, 150.0, 300.0, 30.0),
-                FontKind::Body,
-                theme::TEXT_DIM,
-                Align::Center,
-            );
-            println!("text center ok");
 
             SelectObject(dc, old);
             DeleteObject(bitmap as HGDIOBJ);

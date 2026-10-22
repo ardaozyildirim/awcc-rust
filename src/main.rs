@@ -22,14 +22,23 @@ use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    MOD_NOREPEAT, RegisterHotKey, ReleaseCapture, SetCapture, UnregisterHotKey, VK_F10, VK_F6,
+    VK_F7, VK_F8, VK_F9,
+};
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const CLASS_NAME: &str = "AwccLiteWindow";
-const APP_TITLE: &str = "AWCC Lite";
+const APP_TITLE: &str = "Alienware Command Center";
 const TIMER_ID: usize = 1;
 const POLL_MS: u32 = 2000;
+
+const HOTKEY_F6: i32 = 1001;
+const HOTKEY_F7: i32 = 1002;
+const HOTKEY_F8: i32 = 1003;
+const HOTKEY_F9: i32 = 1004;
+const HOTKEY_F10: i32 = 1005;
 
 const UI_WIDTH: f32 = 700.0;
 const UI_HEIGHT: f32 = 830.0;
@@ -37,12 +46,12 @@ const UI_HEIGHT: f32 = 830.0;
 const PAD: f32 = 24.0;
 
 const MODE_HINTS: [&str; 6] = [
-    "Express charge, quiet",
-    "Minimum noise",
-    "Everyday default",
-    "Boosted clocks",
-    "Maximum speed",
-    "Your own fan curve",
+    "Battery Saver",
+    "Whisper Silent",
+    "Everyday Default",
+    "Boosted Clocks",
+    "Turbo Max Speed",
+    "Custom Profile",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -218,6 +227,13 @@ impl App {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
             SetTimer(hwnd, TIMER_ID, POLL_MS, None);
+
+            // Register Alienware global hotkeys & macros
+            RegisterHotKey(hwnd, HOTKEY_F6, MOD_NOREPEAT, VK_F6 as u32);
+            RegisterHotKey(hwnd, HOTKEY_F7, MOD_NOREPEAT, VK_F7 as u32);
+            RegisterHotKey(hwnd, HOTKEY_F8, MOD_NOREPEAT, VK_F8 as u32);
+            RegisterHotKey(hwnd, HOTKEY_F9, MOD_NOREPEAT, VK_F9 as u32);
+            RegisterHotKey(hwnd, HOTKEY_F10, MOD_NOREPEAT, VK_F10 as u32);
         }
 
         self.refresh();
@@ -515,6 +531,87 @@ impl App {
         }
     }
 
+    fn cycle_profile(&mut self) {
+        if !self.can_write() {
+            self.error = Some("Administrator access is required to cycle profiles.".into());
+            self.invalidate();
+            return;
+        }
+        if self.stealth_on {
+            self.toggle_stealth();
+            return;
+        }
+        let supported = self
+            .status
+            .as_ref()
+            .map(|s| s.device.profile_ids.clone())
+            .unwrap_or_default();
+        if supported.is_empty() {
+            return;
+        }
+        let current = self.status.as_ref().map(|s| s.current_profile).unwrap_or(0);
+        let order = [
+            awcc::PROFILE_QUIET,
+            0xA0, // Balanced
+            awcc::PROFILE_PERFORMANCE,
+            0xA4, // Overdrive
+            0xA2, // Battery
+        ];
+        let active_list: Vec<u8> = order.iter().copied().filter(|id| supported.contains(id)).collect();
+        let list = if active_list.is_empty() { supported } else { active_list };
+        let next_idx = match list.iter().position(|&id| id == current) {
+            Some(pos) => (pos + 1) % list.len(),
+            None => 0,
+        };
+        let target_id = list[next_idx];
+        if let Some(pos) = PROFILES.iter().position(|p| p.id == target_id) {
+            self.apply_profile(pos);
+            self.notice = Some(format!("F6 Hotkey: Cycled to {} mode", PROFILES[pos].label));
+        }
+    }
+
+    fn macro_overdrive(&mut self) {
+        if !self.can_write() {
+            self.error = Some("Administrator access is required for Turbo Macro.".into());
+            self.invalidate();
+            return;
+        }
+        if self.stealth_on {
+            self.stealth_on = false;
+        }
+        if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA4) {
+            self.apply_profile(pos);
+            self.notice = Some("Macro F8: Turbo Overdrive Activated (Max Fans & Clocks)".to_string());
+        }
+    }
+
+    fn macro_quiet(&mut self) {
+        if !self.can_write() {
+            self.error = Some("Administrator access is required for Quiet Macro.".into());
+            self.invalidate();
+            return;
+        }
+        if let Some(pos) = PROFILES.iter().position(|p| p.id == awcc::PROFILE_QUIET) {
+            self.apply_profile(pos);
+            self.notice = Some("Macro F9: Whisper Quiet Activated".to_string());
+        }
+    }
+
+    fn macro_balanced(&mut self) {
+        if !self.can_write() {
+            self.error = Some("Administrator access is required for Balanced Macro.".into());
+            self.invalidate();
+            return;
+        }
+        if self.stealth_on {
+            self.stealth_on = false;
+        }
+        if let Some(pos) = PROFILES.iter().position(|p| p.id == 0xA0) {
+            self.apply_profile(pos);
+            self.notice = Some("Macro F10: Balanced Everyday Restored".to_string());
+        }
+    }
+
     fn apply_tcc(&mut self) {
         if !self.can_write() {
             self.error = Some("Administrator access is required to change the CPU limit.".into());
@@ -711,37 +808,45 @@ impl App {
 
     fn draw_header(&self, painter: &Painter) {
         painter.text(
-            "AWCC Lite",
-            Rect::new(PAD, 20.0, 400.0, 34.0),
+            "ALIENWARE 16 AURORA",
+            Rect::new(PAD, 18.0, 300.0, 16.0),
+            FontKind::Tiny,
+            theme::ACCENT,
+            Align::Left,
+        );
+        painter.text(
+            "COMMAND CENTER",
+            Rect::new(PAD, 34.0, 320.0, 32.0),
             FontKind::Title,
             theme::TEXT,
             Align::Left,
         );
+        painter.fill_circle((PAD + 276.0, 52.0), 4.0, theme::ACCENT);
         painter.text(
-            "Thermal and fan control for Alienware",
-            Rect::new(PAD, 54.0, 400.0, 20.0),
-            FontKind::Body,
+            "HARDWARE ACPI ACTIVE",
+            Rect::new(PAD + 288.0, 44.0, 180.0, 16.0),
+            FontKind::Tiny,
             theme::TEXT_FAINT,
             Align::Left,
         );
 
         let (label, color) = if self.admin {
-            ("Administrator", theme::GOOD)
+            ("ADMINISTRATOR", theme::GOOD)
         } else {
-            ("Read-only", theme::WARN)
+            ("READ-ONLY", theme::WARN)
         };
         let pill_right = if self.admin {
             UI_WIDTH - PAD
         } else {
             UI_WIDTH - PAD - 102.0
         };
-        let pill = Rect::new(pill_right - 132.0, 26.0, 132.0, 30.0);
-        painter.fill_round_rect(pill, 15.0, mix(theme::CARD, color, 0.12));
-        painter.stroke_round_rect(pill, 15.0, mix(theme::BORDER, color, 0.45), 1.0);
-        painter.fill_circle((pill.x + 18.0, pill.y + 15.0), 4.0, color);
+        let pill = Rect::new(pill_right - 142.0, 24.0, 142.0, 32.0);
+        painter.fill_round_rect(pill, 16.0, mix(theme::CARD, color, 0.15));
+        painter.stroke_glow_round_rect(pill, 16.0, color, theme::ACCENT_GLOW);
+        painter.fill_circle((pill.x + 18.0, pill.y + 16.0), 4.0, color);
         painter.text(
             label,
-            Rect::new(pill.x + 30.0, pill.y + 7.0, pill.w - 40.0, 18.0),
+            Rect::new(pill.x + 28.0, pill.y + 8.0, pill.w - 36.0, 18.0),
             FontKind::Label,
             theme::TEXT,
             Align::Left,
@@ -792,6 +897,7 @@ impl App {
         let ratio = (value as f32 / 100.0).clamp(0.0, 1.0);
         let color = temp_color(value);
         if temperature.is_some() && ratio > 0.0 {
+            painter.arc(arc_rect, 135.0, 270.0 * ratio, mix(color, theme::BG, 0.45), 14.0);
             painter.arc(arc_rect, 135.0, 270.0 * ratio, color, 10.0);
         }
         painter.fill_circle(center, radius - 12.0, theme::CARD);
@@ -851,8 +957,8 @@ impl App {
         painter.fill_round_rect(card, 16.0, theme::CARD);
         painter.stroke_round_rect(card, 16.0, theme::BORDER, 1.0);
         painter.text(
-            "FANS",
-            Rect::new(card.x + 20.0, card.y + 14.0, 200.0, 18.0),
+            "FAN COOLING & TACHOMETERS",
+            Rect::new(card.x + 20.0, card.y + 14.0, 300.0, 18.0),
             FontKind::Section,
             theme::TEXT_FAINT,
             Align::Left,
@@ -922,8 +1028,8 @@ impl App {
         painter.fill_round_rect(card, 16.0, theme::CARD);
         painter.stroke_round_rect(card, 16.0, theme::BORDER, 1.0);
         painter.text(
-            "THERMAL PROFILE",
-            Rect::new(card.x + 20.0, card.y + 20.0, 260.0, 18.0),
+            "THERMAL PROFILES  [F6 CYCLE]",
+            Rect::new(card.x + 20.0, card.y + 20.0, 300.0, 18.0),
             FontKind::Section,
             theme::TEXT_FAINT,
             Align::Left,
@@ -956,7 +1062,7 @@ impl App {
             };
             painter.fill_round_rect(tile, 12.0, background);
             if active {
-                painter.stroke_round_rect(tile, 12.0, theme::ACCENT, 1.5);
+                painter.stroke_glow_round_rect(tile, 12.0, theme::ACCENT, theme::ACCENT_GLOW);
             } else if hovered && offered {
                 painter.stroke_round_rect(tile, 12.0, theme::BORDER_HOVER, 1.0);
             } else {
@@ -977,9 +1083,27 @@ impl App {
             } else {
                 theme::TEXT_FAINT
             };
+
+            let tag = match profile.id {
+                0xA4 => "TURBO [F8]",
+                PROFILE_QUIET => "WHISPER [F9]",
+                0xA0 => "BALANCED [F10]",
+                PROFILE_PERFORMANCE => "BOOST [F6]",
+                0xA2 => "ECO",
+                _ => "TUNED",
+            };
+            let tag_color = if active { theme::ACCENT } else { theme::TEXT_FAINT };
+            painter.text(
+                tag,
+                Rect::new(tile.x + tile.w - 110.0, tile.y + 12.0, 96.0, 16.0),
+                FontKind::Tiny,
+                tag_color,
+                Align::Right,
+            );
+
             painter.text(
                 profile.label,
-                Rect::new(tile.x + 16.0, tile.y + 12.0, tile.w - 32.0, 20.0),
+                Rect::new(tile.x + 16.0, tile.y + 12.0, tile.w - 120.0, 20.0),
                 FontKind::Label,
                 name_color,
                 Align::Left,
@@ -992,7 +1116,7 @@ impl App {
                 Align::Left,
             );
             if active {
-                painter.fill_circle((tile.x + tile.w - 18.0, tile.y + 20.0), 4.0, theme::ACCENT);
+                painter.fill_circle((tile.x + tile.w - 14.0, tile.y + tile.h - 14.0), 3.5, theme::ACCENT);
             }
         }
 
@@ -1014,14 +1138,14 @@ impl App {
         };
         painter.fill_circle((knob_x, switch.y + switch.h / 2.0), 9.0, theme::TEXT);
         painter.text(
-            "STEALTH",
+            "STEALTH [F7]",
             Rect::new(
-                switch.x - 96.0,
+                switch.x - 110.0,
                 switch.y + 6.0,
-                84.0,
+                100.0,
                 18.0,
             ),
-            FontKind::Section,
+            FontKind::Label,
             if on { theme::ACCENT } else { theme::TEXT_FAINT },
             Align::Right,
         );
@@ -1156,11 +1280,11 @@ impl App {
         } else if let Some(notice) = &self.notice {
             (notice.clone(), theme::GOOD)
         } else {
-            (format!("{interface}  -  updated {clock}"), theme::TEXT_FAINT)
+            (format!("ACPI: {interface}  |  MACROS: F6 Cycle, F7 Stealth, F8 Turbo, F9 Whisper, F10 Balanced  |  {clock}"), theme::TEXT_FAINT)
         };
         painter.text(
             &message,
-            Rect::new(footer.x, footer.y + 8.0, 420.0, 20.0),
+            Rect::new(footer.x, footer.y + 8.0, footer.w - 210.0, 20.0),
             FontKind::Tiny,
             color,
             Align::Left,
@@ -1334,6 +1458,21 @@ unsafe extern "system" fn wndproc(
                 }
                 0
             }
+            WM_HOTKEY => {
+                let id = wparam as i32;
+                let app = app_ptr(hwnd);
+                if !app.is_null() {
+                    match id {
+                        HOTKEY_F6 => (*app).cycle_profile(),
+                        HOTKEY_F7 => (*app).toggle_stealth(),
+                        HOTKEY_F8 => (*app).macro_overdrive(),
+                        HOTKEY_F9 => (*app).macro_quiet(),
+                        HOTKEY_F10 => (*app).macro_balanced(),
+                        _ => {}
+                    }
+                }
+                0
+            }
             WM_CLOSE => {
                 log::info(format_args!("WM_CLOSE"));
                 DestroyWindow(hwnd);
@@ -1342,6 +1481,11 @@ unsafe extern "system" fn wndproc(
             WM_DESTROY => {
                 log::info(format_args!("WM_DESTROY"));
                 KillTimer(hwnd, TIMER_ID);
+                UnregisterHotKey(hwnd, HOTKEY_F6);
+                UnregisterHotKey(hwnd, HOTKEY_F7);
+                UnregisterHotKey(hwnd, HOTKEY_F8);
+                UnregisterHotKey(hwnd, HOTKEY_F9);
+                UnregisterHotKey(hwnd, HOTKEY_F10);
                 PostQuitMessage(0);
                 0
             }
